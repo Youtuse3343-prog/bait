@@ -43,6 +43,8 @@ ROTATING_STATUSES = [
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0").strip()
 WEB_PORT = int(os.getenv("PORT", os.getenv("WEB_PORT", "8080")))
 KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "").strip()
+ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "false").strip().lower() in {"1", "true", "yes", "on"}
+SYNC_COMMANDS = os.getenv("SYNC_COMMANDS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 EMBED_COLOR = 0x7C3AED
 ERROR_COLOR = 0xEF4444
@@ -275,6 +277,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 web_runner: Optional[web.AppRunner] = None
 mongo_client: Optional[AsyncIOMotorClient] = None
 mdb = None
+views_added = False
+commands_synced = False
 
 
 def utcnow() -> datetime:
@@ -1253,17 +1257,36 @@ async def setup_hook():
 
 @bot.event
 async def on_ready():
-    bot.add_view(TicketPanelView())
-    bot.add_view(CloseTicketView())
-    bot.add_view(OAuthVerifyView(0))
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
-    except Exception as e:
-        print(f"Slash command sync failed: {e}")
+    global views_added, commands_synced
+
+    # on_ready can run again after Discord reconnects. Do not re-add persistent
+    # views or re-sync slash commands on every reconnect. Repeated sync/restart
+    # loops can push the bot into Discord's global 429 rate limit.
+    if not views_added:
+        bot.add_view(TicketPanelView())
+        bot.add_view(CloseTicketView())
+        bot.add_view(OAuthVerifyView(0))
+        views_added = True
+
+    # Keep this OFF on Render unless you intentionally changed slash commands.
+    # To sync once after command edits, set SYNC_COMMANDS=true for one deploy,
+    # then set it back to false.
+    if SYNC_COMMANDS and not commands_synced:
+        try:
+            synced = await bot.tree.sync()
+            commands_synced = True
+            print(f"Synced {len(synced)} slash commands.")
+        except Exception as e:
+            print(f"Slash command sync failed: {e}")
+
     if not rotate_status.is_running(): rotate_status.start()
     if not update_stats.is_running(): update_stats.start()
-    if not self_ping.is_running(): self_ping.start()
+
+    # Self-pinging can keep free web services in a restart/login loop. Leave it
+    # disabled by default. Use an external uptime monitor only after the bot is stable.
+    if ENABLE_SELF_PING and KEEP_ALIVE_URL and not self_ping.is_running():
+        self_ping.start()
+
     print(f"Logged in as {bot.user}")
 
 
@@ -1307,9 +1330,11 @@ async def update_stats():
                 except discord.HTTPException: pass
 
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=5)
 async def self_ping():
-    url = KEEP_ALIVE_URL or f"http://127.0.0.1:{WEB_PORT}/health"
+    url = KEEP_ALIVE_URL
+    if not url:
+        return
     try:
         async with ClientSession() as session:
             async with session.get(url, timeout=15) as response:
