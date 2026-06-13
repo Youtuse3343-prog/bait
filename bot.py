@@ -4,7 +4,9 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import os
+import random
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
@@ -47,6 +49,174 @@ ERROR_COLOR = 0xEF4444
 SUCCESS_COLOR = 0x22C55E
 INFO_COLOR = 0x38BDF8
 STARTED_AT = datetime.now(timezone.utc)
+
+log = logging.getLogger("moealturej")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+# =========================
+# SMART DISCORD RATE LIMITING
+# =========================
+# These are intentionally conservative. Discord.py handles normal per-route
+# buckets, but a bug, spam-clicks, join raids, or multiple dashboard sends can
+# still push the bot into Discord's global 429 lockout. All high-volume Discord
+# actions in this app now pass through this guard.
+DISCORD_API_MIN_GAP = float(os.getenv("DISCORD_API_MIN_GAP", "0.85"))
+DISCORD_ROLE_MIN_GAP = float(os.getenv("DISCORD_ROLE_MIN_GAP", "1.75"))
+DISCORD_MESSAGE_MIN_GAP = float(os.getenv("DISCORD_MESSAGE_MIN_GAP", "1.10"))
+DISCORD_INTERACTION_MIN_GAP = float(os.getenv("DISCORD_INTERACTION_MIN_GAP", "1.00"))
+DISCORD_CHANNEL_MIN_GAP = float(os.getenv("DISCORD_CHANNEL_MIN_GAP", "2.50"))
+DISCORD_MAX_RETRIES = int(os.getenv("DISCORD_MAX_RETRIES", "4"))
+VERIFY_CLICK_COOLDOWN_SECONDS = int(os.getenv("VERIFY_CLICK_COOLDOWN_SECONDS", "20"))
+TICKET_CLICK_COOLDOWN_SECONDS = int(os.getenv("TICKET_CLICK_COOLDOWN_SECONDS", "20"))
+DASHBOARD_SEND_COOLDOWN_SECONDS = int(os.getenv("DASHBOARD_SEND_COOLDOWN_SECONDS", "8"))
+MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS = int(os.getenv("MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS", "7"))
+
+class DiscordRateLimiter:
+    def __init__(self) -> None:
+        self._global_lock = asyncio.Lock()
+        self._route_locks: dict[str, asyncio.Lock] = {}
+        self._last_global = 0.0
+        self._last_route: dict[str, float] = {}
+        self._cooldowns: dict[str, float] = {}
+        self._blocked_until = 0.0
+
+    def _lock_for(self, route: str) -> asyncio.Lock:
+        lock = self._route_locks.get(route)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._route_locks[route] = lock
+        return lock
+
+    async def wait(self, route: str, min_gap: float = DISCORD_API_MIN_GAP) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._global_lock:
+            now = loop.time()
+            wait_for = max(0.0, self._blocked_until - now, self._last_global + DISCORD_API_MIN_GAP - now)
+            if wait_for:
+                await asyncio.sleep(wait_for + random.uniform(0.05, 0.20))
+            self._last_global = loop.time()
+
+        lock = self._lock_for(route)
+        async with lock:
+            now = loop.time()
+            wait_for = max(0.0, self._last_route.get(route, 0.0) + min_gap - now)
+            if wait_for:
+                await asyncio.sleep(wait_for + random.uniform(0.05, 0.20))
+            self._last_route[route] = loop.time()
+
+    def block_global(self, seconds: float) -> None:
+        loop = asyncio.get_running_loop()
+        self._blocked_until = max(self._blocked_until, loop.time() + max(1.0, seconds))
+
+    def on_cooldown(self, key: str, seconds: int) -> bool:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        until = self._cooldowns.get(key, 0.0)
+        if until > now:
+            return True
+        self._cooldowns[key] = now + seconds
+        # small cleanup so this never grows forever
+        if len(self._cooldowns) > 10000:
+            old = now - 300
+            self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > old}
+        return False
+
+rate_limiter = DiscordRateLimiter()
+
+
+def _retry_after_from(exc: discord.HTTPException) -> float:
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is None:
+        data = getattr(exc, "text", "") or ""
+        try:
+            parsed = json.loads(data) if isinstance(data, str) else data
+            retry_after = parsed.get("retry_after") if isinstance(parsed, dict) else None
+        except Exception:
+            retry_after = None
+    try:
+        return float(retry_after or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def discord_guarded(label: str, route: str, func, *, min_gap: float = DISCORD_API_MIN_GAP, retries: int = DISCORD_MAX_RETRIES, default=None):
+    for attempt in range(retries + 1):
+        await rate_limiter.wait(route, min_gap)
+        try:
+            return await func()
+        except discord.Forbidden:
+            log.warning("Discord forbidden during %s", label)
+            return default
+        except discord.NotFound:
+            log.warning("Discord target not found during %s", label)
+            return default
+        except discord.HTTPException as exc:
+            if getattr(exc, "status", None) == 429:
+                retry_after = _retry_after_from(exc) or min(60.0, 2.0 * (attempt + 1))
+                if "global" in str(exc).lower() or "global rate" in str(exc).lower() or "blocked" in str(exc).lower():
+                    rate_limiter.block_global(retry_after + 5)
+                log.warning("Discord 429 during %s. Retry %s/%s after %.2fs", label, attempt + 1, retries, retry_after)
+                await asyncio.sleep(retry_after + random.uniform(0.5, 1.5))
+                continue
+            log.warning("Discord HTTP error during %s: %s", label, exc)
+            return default
+        except ClientError as exc:
+            wait_for = min(20.0, 1.5 * (attempt + 1))
+            log.warning("Network error during %s: %s. Retry after %.1fs", label, exc, wait_for)
+            await asyncio.sleep(wait_for)
+    log.error("Discord action failed after retries: %s", label)
+    return default
+
+
+async def safe_interaction_send(interaction: discord.Interaction, *args, **kwargs) -> bool:
+    async def op():
+        if interaction.response.is_done():
+            await interaction.followup.send(*args, **kwargs)
+        else:
+            await interaction.response.send_message(*args, **kwargs)
+        return True
+    return bool(await discord_guarded("interaction response", f"interaction:{interaction.user.id}", op, min_gap=DISCORD_INTERACTION_MIN_GAP, default=False))
+
+
+async def safe_channel_send(channel: discord.abc.Messageable, *args, **kwargs):
+    channel_id = getattr(channel, "id", "dm")
+    return await discord_guarded("channel send", f"send:{channel_id}", lambda: channel.send(*args, **kwargs), min_gap=DISCORD_MESSAGE_MIN_GAP)
+
+
+async def safe_user_send(user: discord.abc.User, *args, **kwargs) -> bool:
+    return bool(await discord_guarded("user DM", f"dm:{user.id}", lambda: user.send(*args, **kwargs), min_gap=DISCORD_MESSAGE_MIN_GAP, default=False))
+
+
+async def safe_channel_edit(channel: discord.abc.GuildChannel, **kwargs) -> bool:
+    return bool(await discord_guarded("channel edit", f"edit_channel:{channel.id}", lambda: channel.edit(**kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=False))
+
+
+async def safe_channel_delete(channel: discord.abc.GuildChannel, **kwargs) -> bool:
+    return bool(await discord_guarded("channel delete", f"delete_channel:{channel.id}", lambda: channel.delete(**kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=False))
+
+async def safe_create_text_channel(guild: discord.Guild, **kwargs) -> Optional[discord.TextChannel]:
+    return await discord_guarded("create text channel", f"create_channel:{guild.id}", lambda: guild.create_text_channel(**kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=None)
+
+
+async def safe_create_voice_channel(guild: discord.Guild, *args, **kwargs) -> Optional[discord.VoiceChannel]:
+    return await discord_guarded("create voice channel", f"create_channel:{guild.id}", lambda: guild.create_voice_channel(*args, **kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=None)
+
+
+async def safe_create_category(guild: discord.Guild, *args, **kwargs) -> Optional[discord.CategoryChannel]:
+    return await discord_guarded("create category", f"create_channel:{guild.id}", lambda: guild.create_category(*args, **kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=None)
+
+
+async def safe_change_presence(*args, **kwargs) -> bool:
+    return bool(await discord_guarded("change presence", "presence", lambda: bot.change_presence(*args, **kwargs), min_gap=10.0, retries=2, default=False))
+
+
+async def safe_fetch_member(guild: discord.Guild, user_id: int):
+    return await discord_guarded("fetch member", f"fetch_member:{guild.id}", lambda: guild.fetch_member(user_id), min_gap=DISCORD_API_MIN_GAP, default=None)
+
+
+async def safe_fetch_user(user_id: int):
+    return await discord_guarded("fetch user", "fetch_user", lambda: bot.fetch_user(user_id), min_gap=DISCORD_API_MIN_GAP, default=None)
+
 
 TICKET_TYPES = {
     "general": {
@@ -198,6 +368,28 @@ async def get_dashboard_user(request: web.Request) -> Optional[Dict[str, Any]]:
     return session
 
 
+async def _discord_rest_request(method: str, url: str, *, route: str, **kwargs) -> tuple[int, Any]:
+    async def op():
+        async with ClientSession() as session:
+            async with session.request(method, url, **kwargs) as resp:
+                try:
+                    body = await resp.json(content_type=None)
+                except Exception:
+                    body = await resp.text()
+                if resp.status == 429:
+                    retry_after = 0.0
+                    if isinstance(body, dict):
+                        retry_after = float(body.get("retry_after") or 0)
+                    if isinstance(body, dict) and body.get("global"):
+                        rate_limiter.block_global(retry_after + 5)
+                    raise discord.HTTPException(resp, body)
+                return resp.status, body
+    result = await discord_guarded(f"REST {method} {route}", f"rest:{route}", op, min_gap=DISCORD_API_MIN_GAP, default=None)
+    if result is None:
+        raise web.HTTPTooManyRequests(text="Discord is rate limiting requests. Try again shortly.")
+    return result
+
+
 async def exchange_code(code: str, redirect_uri: str) -> Dict[str, Any]:
     data = {
         "client_id": DISCORD_CLIENT_ID,
@@ -207,31 +399,21 @@ async def exchange_code(code: str, redirect_uri: str) -> Dict[str, Any]:
         "redirect_uri": redirect_uri,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    async with ClientSession() as session:
-        async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
-            body = await resp.json(content_type=None)
-            if resp.status >= 400:
-                raise web.HTTPBadRequest(text=f"Discord OAuth failed: {body}")
-            return body
+    status, body = await _discord_rest_request("POST", "https://discord.com/api/oauth2/token", route="oauth_token", data=data, headers=headers)
+    if status >= 400:
+        raise web.HTTPBadRequest(text=f"Discord OAuth failed: {body}")
+    return body
 
 
 async def discord_get(path: str, token: str) -> Any:
-    async with ClientSession() as session:
-        async with session.get(f"https://discord.com/api{path}", headers={"Authorization": f"Bearer {token}"}) as resp:
-            body = await resp.json(content_type=None)
-            if resp.status >= 400:
-                raise web.HTTPBadRequest(text=f"Discord API failed: {body}")
-            return body
+    status, body = await _discord_rest_request("GET", f"https://discord.com/api{path}", route=f"get:{path}", headers={"Authorization": f"Bearer {token}"})
+    if status >= 400:
+        raise web.HTTPBadRequest(text=f"Discord API failed: {body}")
+    return body
 
 
 async def discord_put(path: str, token: str, payload: Dict[str, Any]) -> tuple[int, Any]:
-    async with ClientSession() as session:
-        async with session.put(f"https://discord.com/api{path}", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json"}, json=payload) as resp:
-            try:
-                body = await resp.json(content_type=None)
-            except Exception:
-                body = await resp.text()
-            return resp.status, body
+    return await _discord_rest_request("PUT", f"https://discord.com/api{path}", route=f"put:{path}", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json"}, json=payload)
 
 
 def guild_manageable(user_guild: Dict[str, Any]) -> bool:
@@ -265,11 +447,11 @@ def owner_private_message() -> str:
 def admin_only():
     async def predicate(interaction: discord.Interaction) -> bool:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("This command only works in a server.", ephemeral=True)
+            await safe_interaction_send(interaction, "This command only works in a server.", ephemeral=True)
             return False
         config = await get_guild_config(interaction.guild.id)
         if not member_is_command_admin(interaction.user, config):
-            await interaction.response.send_message(owner_private_message(), ephemeral=True)
+            await safe_interaction_send(interaction, owner_private_message(), ephemeral=True)
             return False
         return True
     return app_commands.check(predicate)
@@ -284,7 +466,7 @@ def guild_enabled_or_owner():
         config = await get_guild_config(interaction.guild.id)
         if config.get("enabled"):
             return True
-        await interaction.response.send_message(owner_private_message(), ephemeral=True)
+        await safe_interaction_send(interaction, owner_private_message(), ephemeral=True)
         return False
     return app_commands.check(predicate)
 
@@ -309,11 +491,15 @@ async def safe_add_role(member: discord.Member, role_id: Optional[int], reason: 
         return False
     if role in member.roles:
         return True
-    try:
+    if not member.guild.me.guild_permissions.manage_roles or role >= member.guild.me.top_role:
+        log.warning("Cannot add role %s in %s due to permissions/hierarchy", role.name, member.guild.name)
+        return False
+
+    async def op():
         await member.add_roles(role, reason=reason)
         return True
-    except discord.Forbidden:
-        return False
+
+    return bool(await discord_guarded(f"add role {role.id} to {member.id}", f"role:{member.guild.id}", op, min_gap=DISCORD_ROLE_MIN_GAP, default=False))
 
 
 async def safe_remove_role(member: discord.Member, role_id: Optional[int], reason: str) -> bool:
@@ -322,11 +508,15 @@ async def safe_remove_role(member: discord.Member, role_id: Optional[int], reaso
     role = member.guild.get_role(int(role_id))
     if not role or role not in member.roles:
         return False
-    try:
+    if not member.guild.me.guild_permissions.manage_roles or role >= member.guild.me.top_role:
+        log.warning("Cannot remove role %s in %s due to permissions/hierarchy", role.name, member.guild.name)
+        return False
+
+    async def op():
         await member.remove_roles(role, reason=reason)
         return True
-    except discord.Forbidden:
-        return False
+
+    return bool(await discord_guarded(f"remove role {role.id} from {member.id}", f"role:{member.guild.id}", op, min_gap=DISCORD_ROLE_MIN_GAP, default=False))
 
 
 async def send_verified_dm(member: discord.Member, store_url: str) -> None:
@@ -339,7 +529,7 @@ async def send_verified_dm(member: discord.Member, store_url: str) -> None:
     embed.set_thumbnail(url=member.guild.icon.url if member.guild.icon else member.display_avatar.url)
     embed.set_footer(text="moealturej verification")
     try:
-        await member.send(embed=embed)
+        await safe_user_send(member, embed=embed)
     except discord.Forbidden:
         pass
 
@@ -357,7 +547,7 @@ async def log_verification(guild: discord.Guild, user: discord.abc.User, method:
     channel = guild.get_channel(config.get("verification_log_channel") or 0)
     if isinstance(channel, discord.TextChannel):
         embed = make_embed("Verification Log", f"**User:** {user.mention if hasattr(user, 'mention') else user}\n**Method:** {method}\n**Status:** {status}\n{details}", SUCCESS_COLOR if status == "success" else ERROR_COLOR)
-        await channel.send(embed=embed)
+        await safe_channel_send(channel, embed=embed)
 
 
 async def build_ticket_transcript(channel: discord.TextChannel) -> tuple[str, bytes]:
@@ -399,7 +589,9 @@ class OAuthVerifyView(discord.ui.View):
     @discord.ui.button(label="Verify with Discord", style=discord.ButtonStyle.success, emoji="✅", custom_id="moe_oauth_verify")
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await interaction.response.send_message("This verification button only works inside the server.", ephemeral=True)
+            return await safe_interaction_send(interaction, "This verification button only works inside the server.", ephemeral=True)
+        if rate_limiter.on_cooldown(f"verify_click:{interaction.guild.id}:{interaction.user.id}", VERIFY_CLICK_COOLDOWN_SECONDS):
+            return await safe_interaction_send(interaction, "Please wait a few seconds before clicking verify again.", ephemeral=True)
 
         config = await get_guild_config(interaction.guild.id)
         verified_role_id = config.get("verified_role")
@@ -408,12 +600,12 @@ class OAuthVerifyView(discord.ui.View):
             removed = await safe_remove_role(interaction.user, config.get("unverified_role"), "Already verified cleanup")
             extra = " I also removed your unverified role." if removed else ""
             await log_verification(interaction.guild, interaction.user, "panel-check", "already_verified", "User clicked verify but already had verified role." + extra)
-            return await interaction.response.send_message(f"✅ You are already verified in **{interaction.guild.name}**.{extra}", ephemeral=True)
+            return await safe_interaction_send(interaction, f"✅ You are already verified in **{interaction.guild.name}**.{extra}", ephemeral=True)
 
         url = f"{PUBLIC_BASE_URL}/verify/start?guild_id={interaction.guild.id}&user_id={interaction.user.id}"
         view = discord.ui.View(timeout=180)
         view.add_item(discord.ui.Button(label="Open secure verification", style=discord.ButtonStyle.link, emoji="🔐", url=url))
-        await interaction.response.send_message("Click the secure OAuth2 link below to verify your Discord account.", view=view, ephemeral=True)
+        await safe_interaction_send(interaction, "Click the secure OAuth2 link below to verify your Discord account.", view=view, ephemeral=True)
 
 
 class TicketSelect(discord.ui.Select):
@@ -423,21 +615,23 @@ class TicketSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await interaction.response.send_message("This only works inside a server.", ephemeral=True)
+            return await safe_interaction_send(interaction, "This only works inside a server.", ephemeral=True)
+        if rate_limiter.on_cooldown(f"ticket_click:{interaction.guild.id}:{interaction.user.id}", TICKET_CLICK_COOLDOWN_SECONDS):
+            return await safe_interaction_send(interaction, "Please wait a few seconds before opening another ticket.", ephemeral=True)
         config = await get_guild_config(interaction.guild.id)
         existing = config.get("open_tickets", {}).get(str(interaction.user.id))
         if existing:
             channel_id = existing.get("channel_id") if isinstance(existing, dict) else existing
             channel = interaction.guild.get_channel(int(channel_id or 0))
             if channel:
-                return await interaction.response.send_message(f"You already have an open ticket: {channel.mention}", ephemeral=True)
+                return await safe_interaction_send(interaction, f"You already have an open ticket: {channel.mention}", ephemeral=True)
             await remove_open_ticket(interaction.guild.id, interaction.user.id)
 
         ticket_key = self.values[0]
         ticket_info = TICKET_TYPES[ticket_key]
         category = interaction.guild.get_channel(config.get("ticket_category") or 0)
         if not isinstance(category, discord.CategoryChannel):
-            return await interaction.response.send_message("Ticket category is not configured yet.", ephemeral=True)
+            return await safe_interaction_send(interaction, "Ticket category is not configured yet.", ephemeral=True)
 
         support_role = interaction.guild.get_role(config.get(ticket_info["support_role_key"]) or 0)
         overwrites = {
@@ -448,19 +642,22 @@ class TicketSelect(discord.ui.Select):
         if support_role:
             overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, read_message_history=True)
 
-        channel = await interaction.guild.create_text_channel(
+        channel = await safe_create_text_channel(
+            interaction.guild,
             name=clean_channel_name(f"ticket-{interaction.user.name}-{ticket_key}"),
             category=category,
             overwrites=overwrites,
             topic=f"owner_id={interaction.user.id} ticket_type={ticket_key}",
             reason=f"Ticket opened by {interaction.user}",
         )
+        if not channel:
+            return await safe_interaction_send(interaction, "Discord is busy right now. Please try opening your ticket again in a minute.", ephemeral=True)
         await add_open_ticket(interaction.guild.id, interaction.user.id, channel.id, ticket_key)
         await save_event("ticket_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "channel_id": channel.id, "event": "opened", "ticket_type": ticket_key})
 
         embed = make_embed(f"{ticket_info['emoji']} {ticket_info['label']}", f"Welcome {interaction.user.mention}. {support_role.mention if support_role else 'Support'} will help you here. Use the button below when finished.")
-        await channel.send(content=f"{interaction.user.mention} {support_role.mention if support_role else ''}", embed=embed, view=CloseTicketView())
-        await interaction.response.send_message(f"Ticket created: {channel.mention}", ephemeral=True)
+        await safe_channel_send(channel, content=f"{interaction.user.mention} {support_role.mention if support_role else ''}", embed=embed, view=CloseTicketView())
+        await safe_interaction_send(interaction, f"Ticket created: {channel.mention}", ephemeral=True)
 
 
 class TicketPanelView(discord.ui.View):
@@ -476,7 +673,7 @@ class CloseTicketView(discord.ui.View):
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="moe_close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
-            return await interaction.response.send_message("This can only be used inside a ticket channel.", ephemeral=True)
+            return await safe_interaction_send(interaction, "This can only be used inside a ticket channel.", ephemeral=True)
         topic = interaction.channel.topic or ""
         owner_id = None
         ticket_type = "unknown"
@@ -495,9 +692,9 @@ class CloseTicketView(discord.ui.View):
                 if role_id and any(role.id == int(role_id) for role in getattr(interaction.user, "roles", [])):
                     allowed = True
         if not allowed:
-            return await interaction.response.send_message("You do not have permission to close this ticket.", ephemeral=True)
+            return await safe_interaction_send(interaction, "You do not have permission to close this ticket.", ephemeral=True)
 
-        await interaction.response.send_message("Saving transcript and closing ticket...", ephemeral=True)
+        await safe_interaction_send(interaction, "Saving transcript and closing ticket...", ephemeral=True)
         filename, transcript = await build_ticket_transcript(interaction.channel)
         import io
 
@@ -506,19 +703,19 @@ class CloseTicketView(discord.ui.View):
         close_embed.add_field(name="Type", value=ticket_type, inline=True)
         if owner:
             try:
-                await owner.send(embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
+                await safe_user_send(owner, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
             except discord.Forbidden:
                 pass
 
         log_channel = interaction.guild.get_channel(config.get("ticket_log_channel") or 0)
         if isinstance(log_channel, discord.TextChannel):
-            await log_channel.send(embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
+            await safe_channel_send(log_channel, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
 
         await save_event("ticket_events", {"guild_id": interaction.guild.id, "user_id": owner_id, "channel_id": interaction.channel.id, "event": "closed", "ticket_type": ticket_type, "closed_by": interaction.user.id})
         if owner_id:
             await remove_open_ticket(interaction.guild.id, owner_id)
         await asyncio.sleep(2)
-        await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
+        await safe_channel_delete(interaction.channel, reason=f"Ticket closed by {interaction.user}")
 
 # =========================
 # WEB DASHBOARD
@@ -765,6 +962,8 @@ async def send_composer(request: web.Request, mode: str) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    if rate_limiter.on_cooldown(f"dashboard_send:{guild_id}:{user['user_id']}:{mode}", DASHBOARD_SEND_COOLDOWN_SECONDS):
+        return page("Slow down", "<section class='card'><h1>Slow down</h1><p class='muted'>Wait a few seconds before sending another dashboard message.</p></section>")
     data = await request.post()
     channel_id = int(str(data.get("channel_id", "0")) or 0)
     channel = guild.get_channel(channel_id)
@@ -793,7 +992,9 @@ async def send_composer(request: web.Request, mode: str) -> web.Response:
     if not content and not embed:
         return page("Nothing to send", "<section class='card'><h1>Nothing to send</h1><p class='muted'>Add a top message, enable the embed, or both.</p></section>")
 
-    await channel.send(content=content or None, embed=embed, allowed_mentions=discord.AllowedMentions.all() if mode == "announcement" else discord.AllowedMentions.none())
+    sent_message = await safe_channel_send(channel, content=content or None, embed=embed, allowed_mentions=discord.AllowedMentions.all() if mode == "announcement" else discord.AllowedMentions.none())
+    if not sent_message:
+        return page("Send failed", "<section class='card'><h1>Discord rejected the send</h1><p class='muted'>The bot hit a temporary Discord limit or lacks permission. Try again shortly.</p></section>")
     await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": f"send_{mode}", "channel_id": channel.id, "title": title, "has_content": bool(content), "has_embed": bool(embed)})
     raise web.HTTPFound(f"/guild/{guild.id}/{'announcements' if mode == 'announcement' else 'embeds'}?sent=1")
 
@@ -887,6 +1088,8 @@ async def dm_send(request: web.Request) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    if rate_limiter.on_cooldown(f"dashboard_dm:{guild_id}:{user['user_id']}", DASHBOARD_SEND_COOLDOWN_SECONDS):
+        raise web.HTTPFound(f"/guild/{guild_id}/dms?failed=1&reason=Wait+a+few+seconds+before+sending+another+DM")
     data = await request.post()
     raw_user_id = str(data.get("user_id", "")).strip()
     if not raw_user_id.isdigit():
@@ -916,10 +1119,15 @@ async def dm_send(request: web.Request) -> web.Response:
         target = guild.get_member(target_id)
         if target is None:
             try:
-                target = await guild.fetch_member(target_id)
+                target = await safe_fetch_member(guild, target_id)
             except discord.NotFound:
-                target = await bot.fetch_user(target_id)
-        await target.send(content=plain_message or None, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                target = None
+            if target is None:
+                target = await safe_fetch_user(target_id)
+        sent_dm = await safe_user_send(target, content=plain_message or None, embed=embed, allowed_mentions=discord.AllowedMentions.none()) if target else False
+        if not sent_dm:
+            await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": "send_dm_failed", "target_user_id": target_id, "reason": "blocked_missing_or_rate_limited"})
+            raise web.HTTPFound(f"/guild/{guild.id}/dms?failed=1&reason=DM+blocked,+target+missing,+or+temporarily+rate+limited")
     except discord.Forbidden:
         await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": "send_dm_failed", "target_user_id": target_id, "reason": "forbidden"})
         raise web.HTTPFound(f"/guild/{guild.id}/dms?failed=1&reason=That+user+has+DMs+disabled+or+blocked+bot+DMs")
@@ -980,7 +1188,9 @@ async def verify_callback(request: web.Request) -> web.Response:
     # guilds.join lets the app add the user to the server when the bot is in that server.
     await discord_put(f"/guilds/{guild_id}/members/{user_id}", BOT_TOKEN, {"access_token": token["access_token"]})
     await asyncio.sleep(1)
-    member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+    member = guild.get_member(user_id) or await safe_fetch_member(guild, user_id)
+    if member is None:
+        return page("Verification delayed", "<section class='hero'><span class='pill'>⏳ Try again</span><h1>Discord is busy</h1><p class='muted'>The bot could not fetch your member record because Discord is rate limiting requests. Please click verify again in a minute.</p></section>")
 
     verified_role_id = config.get("verified_role")
     verified_role = guild.get_role(int(verified_role_id or 0)) if verified_role_id else None
@@ -1066,10 +1276,10 @@ async def on_member_join(member: discord.Member):
     if config.get("auto_role"):
         await safe_add_role(member, config.get("auto_role"), "Auto role on join")
     channel = member.guild.get_channel(config.get("welcome_channel") or 0)
-    if isinstance(channel, discord.TextChannel):
+    if isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
         embed = make_embed("Welcome", f"Welcome {member.mention} to **{member.guild.name}**. Please verify if required and open a ticket if you need support.")
         embed.set_thumbnail(url=member.display_avatar.url)
-        await channel.send(embed=embed)
+        await safe_channel_send(channel, embed=embed)
 
 
 @tasks.loop(seconds=45)
@@ -1077,7 +1287,7 @@ async def rotate_status():
     if not ROTATING_STATUSES: return
     status = ROTATING_STATUSES[rotate_status.current_loop % len(ROTATING_STATUSES)]
     activity = discord.Activity(type=discord.ActivityType.watching, name=status[9:]) if status.lower().startswith("watching ") else discord.Game(name=status)
-    await bot.change_presence(status=discord.Status.online, activity=activity)
+    await safe_change_presence(status=discord.Status.online, activity=activity)
 
 
 @tasks.loop(minutes=10)
@@ -1093,7 +1303,7 @@ async def update_stats():
         for key, name in stats.items():
             channel = guild.get_channel(channels.get(key) or 0)
             if isinstance(channel, discord.VoiceChannel) and channel.name != name:
-                try: await channel.edit(name=name, reason="Live server stats update")
+                try: await safe_channel_edit(channel, name=name, reason="Live server stats update")
                 except discord.HTTPException: pass
 
 
@@ -1113,21 +1323,21 @@ async def self_ping():
 @bot.tree.command(name="ping", description="Check bot latency.")
 @guild_enabled_or_owner()
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=make_embed("Pong", f"Latency: `{round(bot.latency * 1000)}ms`"), ephemeral=True)
+    await safe_interaction_send(interaction, embed=make_embed("Pong", f"Latency: `{round(bot.latency * 1000)}ms`"), ephemeral=True)
 
 
 @bot.tree.command(name="store", description="Get the store link.")
 @guild_enabled_or_owner()
 async def store(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id) if interaction.guild else {"store_url": DEFAULT_STORE_URL}
-    await interaction.response.send_message(embed=make_embed("Store", f"Visit the store here:\n{config.get('store_url', DEFAULT_STORE_URL)}"), ephemeral=True)
+    await safe_interaction_send(interaction, embed=make_embed("Store", f"Visit the store here:\n{config.get('store_url', DEFAULT_STORE_URL)}"), ephemeral=True)
 
 
 @bot.tree.command(name="help", description="Show public commands.")
 async def help_command(interaction: discord.Interaction):
     embed = make_embed("Help", "Public commands available here.")
     embed.add_field(name="Commands", value="`/ping` - Check latency\n`/store` - Store link\n`/help` - This menu", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="commands", description="Show private owner/admin commands.")
@@ -1138,44 +1348,44 @@ async def commands_menu(interaction: discord.Interaction):
     embed.add_field(name="Panels", value="`/send_verification_panel` `/send_ticket_panel`", inline=False)
     embed.add_field(name="Content", value="`/set_store` `/announce` `/config_show`", inline=False)
     embed.add_field(name="Dashboard", value=f"{PUBLIC_BASE_URL}/", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="setup_enable", description="Owner: enable or disable this bot in this server.")
 @admin_only()
 async def setup_enable(interaction: discord.Interaction, enabled: bool):
     if not is_owner_user(interaction.user.id):
-        return await interaction.response.send_message(owner_private_message(), ephemeral=True)
+        return await safe_interaction_send(interaction, owner_private_message(), ephemeral=True)
     await set_config(interaction.guild.id, {"enabled": enabled})
-    await interaction.response.send_message(f"Server access is now {'enabled' if enabled else 'disabled/private'}.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Server access is now {'enabled' if enabled else 'disabled/private'}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_admin_role", description="Set the role allowed to use admin bot commands.")
 @admin_only()
 async def set_admin_role(interaction: discord.Interaction, role: discord.Role):
     await set_config(interaction.guild.id, {"bot_admin_role": role.id})
-    await interaction.response.send_message(f"Bot admin role set to {role.mention}.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Bot admin role set to {role.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_verified_role", description="Set the role given after OAuth2 verification.")
 @admin_only()
 async def set_verified_role(interaction: discord.Interaction, role: discord.Role):
     await set_config(interaction.guild.id, {"verified_role": role.id})
-    await interaction.response.send_message(f"Verified role set to {role.mention}.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Verified role set to {role.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_unverified_role", description="Set the role removed after successful verification.")
 @admin_only()
 async def set_unverified_role(interaction: discord.Interaction, role: discord.Role):
     await set_config(interaction.guild.id, {"unverified_role": role.id})
-    await interaction.response.send_message(f"Unverified role set to {role.mention}. It will be removed after verification.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Unverified role set to {role.mention}. It will be removed after verification.", ephemeral=True)
 
 
 @bot.tree.command(name="set_auto_role", description="Set the role automatically given when a member joins.")
 @admin_only()
 async def set_auto_role(interaction: discord.Interaction, role: discord.Role):
     await set_config(interaction.guild.id, {"auto_role": role.id})
-    await interaction.response.send_message(f"Auto role set to {role.mention}.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Auto role set to {role.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_logs", description="Set verification and ticket transcript log channels.")
@@ -1185,7 +1395,7 @@ async def set_logs(interaction: discord.Interaction, verification_logs: Optional
     if verification_logs: updates["verification_log_channel"] = verification_logs.id
     if ticket_transcripts: updates["ticket_log_channel"] = ticket_transcripts.id
     await set_config(interaction.guild.id, updates)
-    await interaction.response.send_message("Log channels updated.", ephemeral=True)
+    await safe_interaction_send(interaction, "Log channels updated.", ephemeral=True)
 
 
 @bot.tree.command(name="send_verification_panel", description="Send the OAuth2 verification panel.")
@@ -1194,15 +1404,15 @@ async def send_verification_panel(interaction: discord.Interaction, channel: dis
     await set_config(interaction.guild.id, {"verification_channel": channel.id})
     embed = make_embed("Verify Access", "Click below to verify with Discord OAuth2. This securely confirms your Discord account and can add you to the server if needed.")
     embed.set_footer(text="moealturej OAuth2 verification")
-    await channel.send(embed=embed, view=OAuthVerifyView(interaction.guild.id))
-    await interaction.response.send_message(f"OAuth2 verification panel sent in {channel.mention}.", ephemeral=True)
+    await safe_channel_send(channel, embed=embed, view=OAuthVerifyView(interaction.guild.id))
+    await safe_interaction_send(interaction, f"OAuth2 verification panel sent in {channel.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_ticket_category", description="Set the category where tickets will be created.")
 @admin_only()
 async def set_ticket_category(interaction: discord.Interaction, category: discord.CategoryChannel):
     await set_config(interaction.guild.id, {"ticket_category": category.id})
-    await interaction.response.send_message(f"Ticket category set to **{category.name}**.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Ticket category set to **{category.name}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set_ticket_role", description="Set the support role for a ticket type.")
@@ -1210,7 +1420,7 @@ async def set_ticket_category(interaction: discord.Interaction, category: discor
 @admin_only()
 async def set_ticket_role(interaction: discord.Interaction, ticket_type: app_commands.Choice[str], role: discord.Role):
     await set_config(interaction.guild.id, {TICKET_TYPES[ticket_type.value]["support_role_key"]: role.id})
-    await interaction.response.send_message(f"{ticket_type.name} support role set to {role.mention}.", ephemeral=True)
+    await safe_interaction_send(interaction, f"{ticket_type.name} support role set to {role.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="send_ticket_panel", description="Send the ticket panel.")
@@ -1219,15 +1429,15 @@ async def send_ticket_panel(interaction: discord.Interaction, channel: discord.T
     await set_config(interaction.guild.id, {"ticket_panel_channel": channel.id})
     embed = make_embed("Support Tickets", "Choose the ticket type that matches your issue. A private support channel will be created.")
     embed.add_field(name="Options", value="💬 General support\n🔑 Key HWID reset\n📦 Key not received", inline=False)
-    await channel.send(embed=embed, view=TicketPanelView())
-    await interaction.response.send_message(f"Ticket panel sent in {channel.mention}.", ephemeral=True)
+    await safe_channel_send(channel, embed=embed, view=TicketPanelView())
+    await safe_interaction_send(interaction, f"Ticket panel sent in {channel.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="set_store", description="Set the store URL used by /store.")
 @admin_only()
 async def set_store(interaction: discord.Interaction, url: str):
     await set_config(interaction.guild.id, {"store_url": url})
-    await interaction.response.send_message(f"Store URL set to: {url}", ephemeral=True)
+    await safe_interaction_send(interaction, f"Store URL set to: {url}", ephemeral=True)
 
 
 @bot.tree.command(name="announce", description="Send a clean announcement embed.")
@@ -1238,8 +1448,8 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
     if image_url or config.get("announce_image"):
         embed.set_image(url=image_url or config.get("announce_image"))
     embed.set_footer(text=config.get("announce_footer") or "moealturej")
-    await channel.send(embed=embed)
-    await interaction.response.send_message(f"Announcement sent in {channel.mention}.", ephemeral=True)
+    await safe_channel_send(channel, embed=embed)
+    await safe_interaction_send(interaction, f"Announcement sent in {channel.mention}.", ephemeral=True)
 
 
 @bot.tree.command(name="stats_setup", description="Create/connect emoji live server stats voice channels.")
@@ -1247,7 +1457,9 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
 async def stats_setup(interaction: discord.Interaction, category: Optional[discord.CategoryChannel] = None):
     guild = interaction.guild
     if category is None:
-        category = await guild.create_category("📊 Server Stats", reason="Live server stats setup")
+        category = await safe_create_category(guild, "📊 Server Stats", reason="Live server stats setup")
+    if category is None:
+        return await safe_interaction_send(interaction, "Discord is busy right now. Please try stats setup again in a minute.", ephemeral=True)
     overwrites = {guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True), guild.me: discord.PermissionOverwrite(connect=True, manage_channels=True, view_channel=True)}
     defaults = {"members": "👥 Members: 0", "humans": "🧑 Humans: 0", "bots": "🤖 Bots: 0", "boosts": "🚀 Boosts: 0"}
     created = {}
@@ -1255,11 +1467,13 @@ async def stats_setup(interaction: discord.Interaction, category: Optional[disco
     for key, name in defaults.items():
         channel = guild.get_channel((config.get("stats_channels") or {}).get(key) or 0)
         if not isinstance(channel, discord.VoiceChannel):
-            channel = await guild.create_voice_channel(name, category=category, overwrites=overwrites, reason="Live stats channel created")
+            channel = await safe_create_voice_channel(guild, name, category=category, overwrites=overwrites, reason="Live stats channel created")
+        if channel is None:
+            return await safe_interaction_send(interaction, "Discord is busy right now. Some stats channels could not be created. Try again in a minute.", ephemeral=True)
         created[key] = channel.id
     await set_config(guild.id, {"stats_category": category.id, "stats_channels": created})
     await update_stats()
-    await interaction.response.send_message(f"Emoji live stats channels are set in **{category.name}**.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Emoji live stats channels are set in **{category.name}**.", ephemeral=True)
 
 
 @bot.tree.command(name="config_show", description="Show this server's saved config.")
@@ -1269,7 +1483,7 @@ async def config_show(interaction: discord.Interaction):
     embed = make_embed("Server Config", "Current MongoDB settings.")
     for key in ["enabled", "verified_role", "unverified_role", "auto_role", "bot_admin_role", "verification_log_channel", "ticket_log_channel", "ticket_category", "store_url"]:
         embed.add_field(name=key, value=str(config.get(key)), inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 # =========================
 # START
