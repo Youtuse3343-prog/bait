@@ -62,16 +62,19 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asct
 # buckets, but a bug, spam-clicks, join raids, or multiple dashboard sends can
 # still push the bot into Discord's global 429 lockout. All high-volume Discord
 # actions in this app now pass through this guard.
-DISCORD_API_MIN_GAP = float(os.getenv("DISCORD_API_MIN_GAP", "0.85"))
-DISCORD_ROLE_MIN_GAP = float(os.getenv("DISCORD_ROLE_MIN_GAP", "1.75"))
-DISCORD_MESSAGE_MIN_GAP = float(os.getenv("DISCORD_MESSAGE_MIN_GAP", "1.10"))
-DISCORD_INTERACTION_MIN_GAP = float(os.getenv("DISCORD_INTERACTION_MIN_GAP", "1.00"))
-DISCORD_CHANNEL_MIN_GAP = float(os.getenv("DISCORD_CHANNEL_MIN_GAP", "2.50"))
-DISCORD_MAX_RETRIES = int(os.getenv("DISCORD_MAX_RETRIES", "4"))
-VERIFY_CLICK_COOLDOWN_SECONDS = int(os.getenv("VERIFY_CLICK_COOLDOWN_SECONDS", "20"))
-TICKET_CLICK_COOLDOWN_SECONDS = int(os.getenv("TICKET_CLICK_COOLDOWN_SECONDS", "20"))
-DASHBOARD_SEND_COOLDOWN_SECONDS = int(os.getenv("DASHBOARD_SEND_COOLDOWN_SECONDS", "8"))
-MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS = int(os.getenv("MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS", "7"))
+DISCORD_API_MIN_GAP = float(os.getenv("DISCORD_API_MIN_GAP", "1.25"))
+DISCORD_ROLE_MIN_GAP = float(os.getenv("DISCORD_ROLE_MIN_GAP", "3.50"))
+DISCORD_MESSAGE_MIN_GAP = float(os.getenv("DISCORD_MESSAGE_MIN_GAP", "1.75"))
+DISCORD_INTERACTION_MIN_GAP = float(os.getenv("DISCORD_INTERACTION_MIN_GAP", "1.25"))
+DISCORD_CHANNEL_MIN_GAP = float(os.getenv("DISCORD_CHANNEL_MIN_GAP", "7.50"))
+DISCORD_MAX_RETRIES = int(os.getenv("DISCORD_MAX_RETRIES", "3"))
+DISCORD_429_CIRCUIT_THRESHOLD = int(os.getenv("DISCORD_429_CIRCUIT_THRESHOLD", "3"))
+DISCORD_429_CIRCUIT_SECONDS = int(os.getenv("DISCORD_429_CIRCUIT_SECONDS", "900"))
+STATS_UPDATE_MINUTES = int(os.getenv("STATS_UPDATE_MINUTES", "60"))
+VERIFY_CLICK_COOLDOWN_SECONDS = int(os.getenv("VERIFY_CLICK_COOLDOWN_SECONDS", "45"))
+TICKET_CLICK_COOLDOWN_SECONDS = int(os.getenv("TICKET_CLICK_COOLDOWN_SECONDS", "120"))
+DASHBOARD_SEND_COOLDOWN_SECONDS = int(os.getenv("DASHBOARD_SEND_COOLDOWN_SECONDS", "20"))
+MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS = int(os.getenv("MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS", "20"))
 
 class DiscordRateLimiter:
     def __init__(self) -> None:
@@ -81,6 +84,7 @@ class DiscordRateLimiter:
         self._last_route: dict[str, float] = {}
         self._cooldowns: dict[str, float] = {}
         self._blocked_until = 0.0
+        self._route_429s: dict[str, list[float]] = {}
 
     def _lock_for(self, route: str) -> asyncio.Lock:
         lock = self._route_locks.get(route)
@@ -110,6 +114,24 @@ class DiscordRateLimiter:
         loop = asyncio.get_running_loop()
         self._blocked_until = max(self._blocked_until, loop.time() + max(1.0, seconds))
 
+    def is_globally_blocked(self) -> bool:
+        return self._blocked_until > asyncio.get_running_loop().time()
+
+    def register_429(self, route: str, retry_after: float) -> None:
+        """Circuit-break repeated 429s so the bot stops digging the hole deeper."""
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        recent = [t for t in self._route_429s.get(route, []) if now - t < 180]
+        recent.append(now)
+        self._route_429s[route] = recent
+        if len(recent) >= DISCORD_429_CIRCUIT_THRESHOLD:
+            pause = max(float(DISCORD_429_CIRCUIT_SECONDS), retry_after + 60.0)
+            self._blocked_until = max(self._blocked_until, now + pause)
+            log.error("Discord circuit breaker opened for %.0fs after repeated 429s on route %s", pause, route)
+
+    def seconds_until_unblocked(self) -> float:
+        return max(0.0, self._blocked_until - asyncio.get_running_loop().time())
+
     def on_cooldown(self, key: str, seconds: int) -> bool:
         loop = asyncio.get_running_loop()
         now = loop.time()
@@ -127,22 +149,56 @@ rate_limiter = DiscordRateLimiter()
 
 
 def _retry_after_from(exc: discord.HTTPException) -> float:
-    retry_after = getattr(exc, "retry_after", None)
-    if retry_after is None:
-        data = getattr(exc, "text", "") or ""
+    """Get Discord's exact retry_after from every place discord.py/aiohttp may expose it."""
+    candidates = [getattr(exc, "retry_after", None)]
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers:
+        candidates.extend([
+            headers.get("Retry-After"),
+            headers.get("X-RateLimit-Reset-After"),
+        ])
+    for attr in ("text", "message"):
+        data = getattr(exc, attr, None)
+        if isinstance(data, dict):
+            candidates.append(data.get("retry_after"))
+        elif isinstance(data, str) and data.strip().startswith("{"):
+            try:
+                parsed = json.loads(data)
+                if isinstance(parsed, dict):
+                    candidates.append(parsed.get("retry_after"))
+            except Exception:
+                pass
+    for value in candidates:
         try:
-            parsed = json.loads(data) if isinstance(data, str) else data
-            retry_after = parsed.get("retry_after") if isinstance(parsed, dict) else None
-        except Exception:
-            retry_after = None
-    try:
-        return float(retry_after or 0)
-    except (TypeError, ValueError):
-        return 0.0
+            if value is not None:
+                return max(0.0, float(value))
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _is_global_429(exc: discord.HTTPException) -> bool:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers and str(headers.get("X-RateLimit-Global", "")).lower() == "true":
+        return True
+    text = str(getattr(exc, "text", "") or getattr(exc, "message", "") or exc).lower()
+    return "global" in text or "blocked" in text
 
 
 async def discord_guarded(label: str, route: str, func, *, min_gap: float = DISCORD_API_MIN_GAP, retries: int = DISCORD_MAX_RETRIES, default=None):
-    for attempt in range(retries + 1):
+    """
+    Hard guard for Discord API calls.
+    - Spaces requests before they hit Discord.
+    - Uses Discord's actual Retry-After on 429.
+    - Opens a circuit breaker after repeated 429s so one feature cannot poison the whole bot.
+    """
+    max_attempts = max(1, retries + 1)
+    for attempt in range(1, max_attempts + 1):
+        if rate_limiter.is_globally_blocked() and route.startswith(("edit_channel", "create_channel", "presence")):
+            log.warning("Skipping non-critical Discord action during global cooldown: %s (%.0fs left)", label, rate_limiter.seconds_until_unblocked())
+            return default
         await rate_limiter.wait(route, min_gap)
         try:
             return await func()
@@ -154,20 +210,34 @@ async def discord_guarded(label: str, route: str, func, *, min_gap: float = DISC
             return default
         except discord.HTTPException as exc:
             if getattr(exc, "status", None) == 429:
-                retry_after = _retry_after_from(exc) or min(60.0, 2.0 * (attempt + 1))
-                if "global" in str(exc).lower() or "global rate" in str(exc).lower() or "blocked" in str(exc).lower():
-                    rate_limiter.block_global(retry_after + 5)
-                log.warning("Discord 429 during %s. Retry %s/%s after %.2fs", label, attempt + 1, retries, retry_after)
-                await asyncio.sleep(retry_after + random.uniform(0.5, 1.5))
+                retry_after = _retry_after_from(exc) or min(120.0, 2.0 ** attempt)
+                if _is_global_429(exc):
+                    rate_limiter.block_global(retry_after + 10)
+                rate_limiter.register_429(route, retry_after)
+                if attempt >= max_attempts:
+                    break
+                log.warning("Discord 429 during %s. Retry %s/%s after %.2fs", label, attempt, max_attempts - 1, retry_after)
+                await asyncio.sleep(retry_after + random.uniform(1.0, 2.5))
                 continue
             log.warning("Discord HTTP error during %s: %s", label, exc)
             return default
         except ClientError as exc:
-            wait_for = min(20.0, 1.5 * (attempt + 1))
-            log.warning("Network error during %s: %s. Retry after %.1fs", label, exc, wait_for)
+            if attempt >= max_attempts:
+                break
+            wait_for = min(30.0, 2.0 * attempt)
+            log.warning("Network error during %s: %s. Retry %s/%s after %.1fs", label, exc, attempt, max_attempts - 1, wait_for)
             await asyncio.sleep(wait_for)
     log.error("Discord action failed after retries: %s", label)
     return default
+
+
+async def safe_interaction_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> bool:
+    if interaction.response.is_done():
+        return True
+    async def op():
+        await interaction.response.defer(ephemeral=ephemeral, thinking=True)
+        return True
+    return bool(await discord_guarded("interaction defer", f"interaction:{interaction.user.id}", op, min_gap=DISCORD_INTERACTION_MIN_GAP, retries=1, default=False))
 
 
 async def safe_interaction_send(interaction: discord.Interaction, *args, **kwargs) -> bool:
@@ -189,7 +259,17 @@ async def safe_user_send(user: discord.abc.User, *args, **kwargs) -> bool:
     return bool(await discord_guarded("user DM", f"dm:{user.id}", lambda: user.send(*args, **kwargs), min_gap=DISCORD_MESSAGE_MIN_GAP, default=False))
 
 
+CHANNEL_NAME_CACHE: dict[int, str] = {}
+
+
 async def safe_channel_edit(channel: discord.abc.GuildChannel, **kwargs) -> bool:
+    # Channel edits are one of Discord's strictest buckets. Never call it for a no-op.
+    new_name = kwargs.get("name")
+    if new_name is not None:
+        if CHANNEL_NAME_CACHE.get(channel.id) == new_name or getattr(channel, "name", None) == new_name:
+            CHANNEL_NAME_CACHE[channel.id] = new_name
+            return True
+        CHANNEL_NAME_CACHE[channel.id] = new_name
     return bool(await discord_guarded("channel edit", f"edit_channel:{channel.id}", lambda: channel.edit(**kwargs), min_gap=DISCORD_CHANNEL_MIN_GAP, default=False))
 
 
@@ -621,7 +701,8 @@ class TicketSelect(discord.ui.Select):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await safe_interaction_send(interaction, "This only works inside a server.", ephemeral=True)
         if rate_limiter.on_cooldown(f"ticket_click:{interaction.guild.id}:{interaction.user.id}", TICKET_CLICK_COOLDOWN_SECONDS):
-            return await safe_interaction_send(interaction, "Please wait a few seconds before opening another ticket.", ephemeral=True)
+            return await safe_interaction_send(interaction, "Please wait before opening another ticket. This prevents Discord rate limits.", ephemeral=True)
+        await safe_interaction_defer(interaction, ephemeral=True)
         config = await get_guild_config(interaction.guild.id)
         existing = config.get("open_tickets", {}).get(str(interaction.user.id))
         if existing:
@@ -698,6 +779,7 @@ class CloseTicketView(discord.ui.View):
         if not allowed:
             return await safe_interaction_send(interaction, "You do not have permission to close this ticket.", ephemeral=True)
 
+        await safe_interaction_defer(interaction, ephemeral=True)
         await safe_interaction_send(interaction, "Saving transcript and closing ticket...", ephemeral=True)
         filename, transcript = await build_ticket_transcript(interaction.channel)
         import io
@@ -1218,7 +1300,7 @@ async def verify_callback(request: web.Request) -> web.Response:
 
 async def health(request: web.Request) -> web.Response:
     uptime = utcnow() - STARTED_AT
-    return web.json_response({"status": "ok", "bot": str(bot.user) if bot.user else "starting", "guilds": len(bot.guilds), "latency_ms": round(bot.latency * 1000) if bot.latency else None, "uptime_seconds": int(uptime.total_seconds())})
+    return web.json_response({"status": "ok", "bot": str(bot.user) if bot.user else "starting", "guilds": len(bot.guilds), "latency_ms": round(bot.latency * 1000) if bot.latency else None, "uptime_seconds": int(uptime.total_seconds()), "discord_global_cooldown_seconds": round(rate_limiter.seconds_until_unblocked())})
 
 
 async def start_web() -> None:
@@ -1305,7 +1387,7 @@ async def on_member_join(member: discord.Member):
         await safe_channel_send(channel, embed=embed)
 
 
-@tasks.loop(seconds=45)
+@tasks.loop(minutes=5)
 async def rotate_status():
     if not ROTATING_STATUSES: return
     status = ROTATING_STATUSES[rotate_status.current_loop % len(ROTATING_STATUSES)]
@@ -1313,8 +1395,11 @@ async def rotate_status():
     await safe_change_presence(status=discord.Status.online, activity=activity)
 
 
-@tasks.loop(minutes=10)
+@tasks.loop(minutes=STATS_UPDATE_MINUTES)
 async def update_stats():
+    if rate_limiter.is_globally_blocked():
+        log.warning("Skipping stats update while Discord global cooldown/circuit breaker is active (%.0fs left)", rate_limiter.seconds_until_unblocked())
+        return
     for guild in bot.guilds:
         config = await get_guild_config(guild.id)
         channels = config.get("stats_channels", {})
@@ -1426,6 +1511,7 @@ async def set_logs(interaction: discord.Interaction, verification_logs: Optional
 @bot.tree.command(name="send_verification_panel", description="Send the OAuth2 verification panel.")
 @admin_only()
 async def send_verification_panel(interaction: discord.Interaction, channel: discord.TextChannel):
+    await safe_interaction_defer(interaction, ephemeral=True)
     await set_config(interaction.guild.id, {"verification_channel": channel.id})
     embed = make_embed("Verify Access", "Click below to verify with Discord OAuth2. This securely confirms your Discord account and can add you to the server if needed.")
     embed.set_footer(text="moealturej OAuth2 verification")
@@ -1451,6 +1537,7 @@ async def set_ticket_role(interaction: discord.Interaction, ticket_type: app_com
 @bot.tree.command(name="send_ticket_panel", description="Send the ticket panel.")
 @admin_only()
 async def send_ticket_panel(interaction: discord.Interaction, channel: discord.TextChannel):
+    await safe_interaction_defer(interaction, ephemeral=True)
     await set_config(interaction.guild.id, {"ticket_panel_channel": channel.id})
     embed = make_embed("Support Tickets", "Choose the ticket type that matches your issue. A private support channel will be created.")
     embed.add_field(name="Options", value="💬 General support\n🔑 Key HWID reset\n📦 Key not received", inline=False)
@@ -1480,6 +1567,7 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
 @bot.tree.command(name="stats_setup", description="Create/connect emoji live server stats voice channels.")
 @admin_only()
 async def stats_setup(interaction: discord.Interaction, category: Optional[discord.CategoryChannel] = None):
+    await safe_interaction_defer(interaction, ephemeral=True)
     guild = interaction.guild
     if category is None:
         category = await safe_create_category(guild, "📊 Server Stats", reason="Live server stats setup")
@@ -1497,8 +1585,7 @@ async def stats_setup(interaction: discord.Interaction, category: Optional[disco
             return await safe_interaction_send(interaction, "Discord is busy right now. Some stats channels could not be created. Try again in a minute.", ephemeral=True)
         created[key] = channel.id
     await set_config(guild.id, {"stats_category": category.id, "stats_channels": created})
-    await update_stats()
-    await safe_interaction_send(interaction, f"Emoji live stats channels are set in **{category.name}**.", ephemeral=True)
+    await safe_interaction_send(interaction, f"Emoji live stats channels are set in **{category.name}**. Stats will refresh on the next safe scheduled cycle.", ephemeral=True)
 
 
 @bot.tree.command(name="config_show", description="Show this server's saved config.")
