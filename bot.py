@@ -46,6 +46,13 @@ KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "").strip()
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "false").strip().lower() in {"1", "true", "yes", "on"}
 SYNC_COMMANDS = os.getenv("SYNC_COMMANDS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
+# Startup protection: if Render/Cloudflare temporarily blocks this server IP
+# from discord.com, do NOT crash/restart-loop. Keep the web health server
+# online and wait before trying login again. Restart loops make error 1015 last longer.
+STARTUP_LOGIN_RETRY_SECONDS = int(os.getenv("STARTUP_LOGIN_RETRY_SECONDS", "1800"))
+STARTUP_GENERIC_RETRY_SECONDS = int(os.getenv("STARTUP_GENERIC_RETRY_SECONDS", "300"))
+STARTUP_MAX_LOGIN_ATTEMPTS = int(os.getenv("STARTUP_MAX_LOGIN_ATTEMPTS", "0"))  # 0 = forever
+
 EMBED_COLOR = 0x7C3AED
 ERROR_COLOR = 0xEF4444
 SUCCESS_COLOR = 0x22C55E
@@ -359,6 +366,8 @@ mongo_client: Optional[AsyncIOMotorClient] = None
 mdb = None
 views_added = False
 commands_synced = False
+startup_blocked_until: Optional[datetime] = None
+last_startup_error: Optional[str] = None
 
 
 def utcnow() -> datetime:
@@ -371,6 +380,8 @@ def now_iso() -> str:
 
 async def init_mongo() -> None:
     global mongo_client, mdb
+    if mdb is not None:
+        return
     mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=8000)
     mdb = mongo_client[MONGO_DB_NAME]
     await mdb.command("ping")
@@ -1300,7 +1311,19 @@ async def verify_callback(request: web.Request) -> web.Response:
 
 async def health(request: web.Request) -> web.Response:
     uptime = utcnow() - STARTED_AT
-    return web.json_response({"status": "ok", "bot": str(bot.user) if bot.user else "starting", "guilds": len(bot.guilds), "latency_ms": round(bot.latency * 1000) if bot.latency else None, "uptime_seconds": int(uptime.total_seconds()), "discord_global_cooldown_seconds": round(rate_limiter.seconds_until_unblocked())})
+    startup_wait = 0
+    if startup_blocked_until:
+        startup_wait = max(0, int((startup_blocked_until - utcnow()).total_seconds()))
+    return web.json_response({
+        "status": "ok",
+        "bot": str(bot.user) if bot.user else ("waiting_for_discord" if startup_wait else "starting"),
+        "guilds": len(bot.guilds),
+        "latency_ms": round(bot.latency * 1000) if bot.latency else None,
+        "uptime_seconds": int(uptime.total_seconds()),
+        "discord_global_cooldown_seconds": round(rate_limiter.seconds_until_unblocked()),
+        "startup_retry_seconds": startup_wait,
+        "last_startup_error": last_startup_error,
+    })
 
 
 async def start_web() -> None:
@@ -1600,7 +1623,19 @@ async def config_show(interaction: discord.Interaction):
 # =========================
 # START
 # =========================
-if __name__ == "__main__":
+def is_cloudflare_startup_limit(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "429 too many requests" in text
+        or "error 1015" in text
+        or "you are being rate limited" in text
+        or "cloudflare" in text and "rate limited" in text
+    )
+
+
+async def run_forever_without_restart_loop() -> None:
+    global startup_blocked_until, last_startup_error
+
     missing = [name for name, value in {
         "BOT_TOKEN": BOT_TOKEN,
         "DISCORD_CLIENT_ID": DISCORD_CLIENT_ID,
@@ -1610,4 +1645,47 @@ if __name__ == "__main__":
     }.items() if not value]
     if missing:
         raise RuntimeError(f"Missing required .env values: {', '.join(missing)}")
-    bot.run(BOT_TOKEN)
+
+    # Start the dashboard/health server before Discord login. This prevents
+    # Render from killing and restarting the service while Discord/Cloudflare is
+    # temporarily blocking this Render IP. The dashboard will show
+    # bot=waiting_for_discord until login succeeds.
+    try:
+        await init_mongo()
+    except Exception as e:
+        log.warning("Mongo init failed before Discord login; setup_hook will retry after login: %s", e)
+    await start_web()
+
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            startup_blocked_until = None
+            last_startup_error = None
+            log.info("Starting Discord login attempt %s%s", attempt, "" if STARTUP_MAX_LOGIN_ATTEMPTS == 0 else f"/{STARTUP_MAX_LOGIN_ATTEMPTS}")
+            await bot.start(BOT_TOKEN, reconnect=True)
+            return
+        except discord.HTTPException as e:
+            if is_cloudflare_startup_limit(e):
+                wait_seconds = STARTUP_LOGIN_RETRY_SECONDS
+                startup_blocked_until = utcnow() + timedelta(seconds=wait_seconds)
+                last_startup_error = "Discord/Cloudflare startup 429 or 1015. Waiting instead of restart-looping."
+                log.error("Discord login is temporarily rate-limited by Discord/Cloudflare. Waiting %ss before retrying. Do NOT manually restart repeatedly.", wait_seconds)
+                await asyncio.sleep(wait_seconds)
+            else:
+                last_startup_error = f"Discord HTTP startup error: {e}"[:500]
+                log.exception("Discord HTTP startup error. Waiting %ss before retrying.", STARTUP_GENERIC_RETRY_SECONDS)
+                await asyncio.sleep(STARTUP_GENERIC_RETRY_SECONDS)
+        except Exception as e:
+            last_startup_error = f"Startup error: {e}"[:500]
+            log.exception("Startup crashed. Waiting %ss before retrying instead of letting Render restart-loop.", STARTUP_GENERIC_RETRY_SECONDS)
+            await asyncio.sleep(STARTUP_GENERIC_RETRY_SECONDS)
+
+        if STARTUP_MAX_LOGIN_ATTEMPTS and attempt >= STARTUP_MAX_LOGIN_ATTEMPTS:
+            log.error("Reached STARTUP_MAX_LOGIN_ATTEMPTS=%s. Keeping health server online without more Discord login attempts.", STARTUP_MAX_LOGIN_ATTEMPTS)
+            while True:
+                await asyncio.sleep(3600)
+
+
+if __name__ == "__main__":
+    asyncio.run(run_forever_without_restart_loop())
