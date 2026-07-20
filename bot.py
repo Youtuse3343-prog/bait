@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import html
+import io
 import json
 import logging
 import os
@@ -82,6 +83,9 @@ VERIFY_CLICK_COOLDOWN_SECONDS = int(os.getenv("VERIFY_CLICK_COOLDOWN_SECONDS", "
 TICKET_CLICK_COOLDOWN_SECONDS = int(os.getenv("TICKET_CLICK_COOLDOWN_SECONDS", "120"))
 DASHBOARD_SEND_COOLDOWN_SECONDS = int(os.getenv("DASHBOARD_SEND_COOLDOWN_SECONDS", "20"))
 MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS = int(os.getenv("MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS", "20"))
+CONFIG_CACHE_SECONDS = int(os.getenv("CONFIG_CACHE_SECONDS", "30"))
+COMMAND_COOLDOWN_SECONDS = int(os.getenv("COMMAND_COOLDOWN_SECONDS", "4"))
+MAX_PURGE_AMOUNT = int(os.getenv("MAX_PURGE_AMOUNT", "100"))
 
 class DiscordRateLimiter:
     def __init__(self) -> None:
@@ -350,6 +354,11 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "stats_channels": {"members": None, "humans": None, "bots": None, "boosts": None},
     "open_tickets": {},
     "oauth_verify_join_enabled": True,
+    "welcome_message": "Welcome {mention} to **{server}**. Please verify if required and open a ticket if you need support.",
+    "welcome_enabled": True,
+    "moderation_log_channel": None,
+    "command_log_channel": None,
+    "default_ticket_name": "ticket-{username}",
 }
 
 # =========================
@@ -368,6 +377,7 @@ views_added = False
 commands_synced = False
 startup_blocked_until: Optional[datetime] = None
 last_startup_error: Optional[str] = None
+CONFIG_CACHE: dict[int, tuple[float, Dict[str, Any]]] = {}
 
 
 def utcnow() -> datetime:
@@ -390,14 +400,24 @@ async def init_mongo() -> None:
     await mdb.sessions.create_index("expires_at", expireAfterSeconds=0)
     await mdb.ticket_events.create_index([("guild_id", 1), ("created_at", -1)])
     await mdb.verification_events.create_index([("guild_id", 1), ("created_at", -1)])
+    await mdb.dashboard_events.create_index([("guild_id", 1), ("created_at", -1)])
+    await mdb.moderation_events.create_index([("guild_id", 1), ("created_at", -1)])
+    await mdb.warnings.create_index([("guild_id", 1), ("user_id", 1), ("created_at", -1)])
 
 
 async def get_guild_config(guild_id: int) -> Dict[str, Any]:
-    existing = await mdb.guild_configs.find_one({"guild_id": int(guild_id)}, {"_id": 0})
+    guild_id = int(guild_id)
+    now = asyncio.get_running_loop().time()
+    cached = CONFIG_CACHE.get(guild_id)
+    if cached and now - cached[0] < CONFIG_CACHE_SECONDS:
+        return dict(cached[1])
+    existing = await mdb.guild_configs.find_one({"guild_id": guild_id}, {"_id": 0})
     if not existing:
         doc = {"guild_id": int(guild_id), **DEFAULT_GUILD_CONFIG, "created_at": now_iso(), "updated_at": now_iso()}
         await mdb.guild_configs.insert_one(doc)
-        return {k: v for k, v in doc.items() if k != "_id"}
+        clean = {k: v for k, v in doc.items() if k != "_id"}
+        CONFIG_CACHE[guild_id] = (now, clean)
+        return dict(clean)
 
     update: Dict[str, Any] = {}
     for key, value in DEFAULT_GUILD_CONFIG.items():
@@ -410,13 +430,15 @@ async def get_guild_config(guild_id: int) -> Dict[str, Any]:
         update["updated_at"] = now_iso()
         await mdb.guild_configs.update_one({"guild_id": int(guild_id)}, {"$set": update})
         existing = await mdb.guild_configs.find_one({"guild_id": int(guild_id)}, {"_id": 0})
-    return existing
+    CONFIG_CACHE[guild_id] = (now, existing)
+    return dict(existing)
 
 
 async def set_config(guild_id: int, updates: Dict[str, Any]) -> None:
     await get_guild_config(guild_id)
     updates["updated_at"] = now_iso()
     await mdb.guild_configs.update_one({"guild_id": int(guild_id)}, {"$set": updates}, upsert=True)
+    CONFIG_CACHE.pop(int(guild_id), None)
 
 
 async def add_open_ticket(guild_id: int, user_id: int, channel_id: int, ticket_type: str) -> None:
@@ -821,7 +843,7 @@ def page(title: str, body: str) -> web.Response:
     css = """
     <style>
     :root{color-scheme:dark;--bg:#030306;--bg2:#070711;--glass:rgba(12,12,22,.74);--glass2:rgba(255,255,255,.055);--panel:rgba(14,14,25,.82);--panel2:rgba(124,58,237,.14);--line:rgba(255,255,255,.12);--line2:rgba(192,132,252,.35);--text:#f8f7ff;--muted:rgba(248,247,255,.66);--soft:rgba(248,247,255,.84);--purple:#8b5cf6;--purple2:#c084fc;--pink:#ec4899;--blue:#38bdf8;--green:#22c55e;--danger:#fb7185;--shadow:0 30px 110px rgba(0,0,0,.42)}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:radial-gradient(circle at 18% -10%,rgba(139,92,246,.38),transparent 34rem),radial-gradient(circle at 92% 12%,rgba(236,72,153,.18),transparent 30rem),radial-gradient(circle at 55% 96%,rgba(56,189,248,.12),transparent 32rem),linear-gradient(180deg,#05050a,#020204 68%,#05050a);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent 82%);opacity:.55}body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 0,rgba(255,255,255,.08),transparent 38rem);mix-blend-mode:screen}a{color:#e9d5ff;text-decoration:none}.wrap{width:min(1220px,calc(100% - 30px));margin:auto;padding:28px 0 58px}.nav{position:sticky;top:14px;z-index:10;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding:12px 14px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,rgba(8,8,15,.82),rgba(20,15,34,.68));backdrop-filter:blur(22px);box-shadow:0 22px 90px rgba(0,0,0,.36)}.brand{display:flex;align-items:center;gap:11px;font-weight:950;letter-spacing:-.05em}.brand:before{content:"✦";display:grid;place-items:center;width:38px;height:38px;border-radius:14px;background:linear-gradient(135deg,var(--purple),var(--pink) 55%,var(--blue));box-shadow:0 14px 50px rgba(139,92,246,.46)}.navlinks{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.navlinks a{padding:9px 12px;border-radius:14px;color:rgba(255,255,255,.74);font-weight:800;font-size:14px}.navlinks a:hover{background:rgba(255,255,255,.08);color:#fff}.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:34px;padding:38px;background:linear-gradient(145deg,rgba(139,92,246,.24),rgba(236,72,153,.08) 38%,rgba(56,189,248,.07) 62%,rgba(255,255,255,.04));box-shadow:var(--shadow)}.hero:before{content:"";position:absolute;inset:1px;border-radius:33px;border:1px solid rgba(255,255,255,.06);pointer-events:none}.hero:after{content:"";position:absolute;right:-100px;top:-120px;width:340px;height:340px;background:radial-gradient(circle,rgba(192,132,252,.38),transparent 68%);filter:blur(2px)}h1{font-size:clamp(34px,5.3vw,68px);letter-spacing:-.07em;line-height:.92;margin:0 0 13px;max-width:930px}h2{letter-spacing:-.04em;margin:0 0 12px;font-size:clamp(22px,2.4vw,31px)}h3{letter-spacing:-.03em;margin:0 0 10px;font-size:20px}.card,.guild,.panel{position:relative;border:1px solid var(--line);background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.04));border-radius:26px;padding:23px;box-shadow:0 24px 90px rgba(0,0,0,.29);backdrop-filter:blur(20px);overflow:hidden}.card:before,.guild:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.07),transparent 38%);pointer-events:none;opacity:.55}.guild{transition:transform .18s ease,border-color .18s ease,background .18s ease}.guild:hover{transform:translateY(-4px);border-color:var(--line2);background:linear-gradient(145deg,rgba(124,58,237,.2),rgba(255,255,255,.055))}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}.section-title{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 0 13px}.btn,button{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#a855f7 55%,#ec4899);color:white;padding:12px 17px;font-weight:950;cursor:pointer;box-shadow:0 17px 46px rgba(124,58,237,.29);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.btn:hover,button:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 22px 58px rgba(124,58,237,.34)}.btn.secondary{background:rgba(255,255,255,.075);box-shadow:none;border:1px solid var(--line)}.muted{color:var(--muted);line-height:1.66}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(139,92,246,.14);color:#ede9fe;border:1px solid rgba(192,132,252,.28);font-size:13px;font-weight:900;box-shadow:inset 0 1px rgba(255,255,255,.08)}code{display:inline-block;max-width:100%;overflow:auto;padding:11px 13px;border-radius:15px;border:1px solid var(--line);background:rgba(0,0,0,.34);color:#ddd6fe}label{display:block;color:rgba(255,255,255,.84);font-size:13px;font-weight:900;letter-spacing:.01em}input,select,textarea{width:100%;margin:8px 0 16px;padding:14px 15px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:#10101b;color:#f8fafc;outline:none;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.018);font:inherit}input::placeholder,textarea::placeholder{color:rgba(255,255,255,.36)}input:focus,select:focus,textarea:focus{border-color:rgba(192,132,252,.75);box-shadow:0 0 0 4px rgba(124,58,237,.18)}textarea{min-height:145px;resize:vertical;line-height:1.55}select{appearance:none;background-color:#10101b;background-image:linear-gradient(45deg,transparent 50%,#c4b5fd 50%),linear-gradient(135deg,#c4b5fd 50%,transparent 50%);background-position:calc(100% - 19px) 52%,calc(100% - 12px) 52%;background-size:7px 7px,7px 7px;background-repeat:no-repeat;padding-right:42px}select option{background:#0d0d18;color:#f8fafc}select option:hover,select option:checked{background:#7c3aed;color:#fff}.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.form-section{margin-top:17px;padding-top:17px;border-top:1px solid var(--line)}.savebar{position:sticky;bottom:14px;display:flex;justify-content:flex-end;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(7,7,13,.8);backdrop-filter:blur(20px)}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.preview-shell{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(0,0,0,.28),rgba(255,255,255,.035));padding:16px}.preview-message{white-space:pre-wrap;color:#f8fafc;line-height:1.55;margin-bottom:12px;padding:13px 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.045)}.preview-box{border:1px solid var(--line);border-left:4px solid var(--purple);border-radius:18px;background:rgba(0,0,0,.24);padding:18px;margin-top:8px}.preview-title{font-weight:950;font-size:20px;letter-spacing:-.025em}.preview-desc{white-space:pre-wrap;color:rgba(255,255,255,.78);line-height:1.55;margin-top:8px}.preview-footer{color:rgba(255,255,255,.48);font-size:12px;margin-top:14px}.preview-img{max-width:100%;border-radius:16px;margin-top:14px;border:1px solid var(--line)}.preview-thumb{float:right;width:88px;height:88px;object-fit:cover;border-radius:16px;margin-left:14px;margin-bottom:10px;border:1px solid var(--line)}.tiny{font-size:12px;color:rgba(255,255,255,.48)}@media(max-width:760px){.row{grid-template-columns:1fr}.nav{position:relative;top:0;align-items:flex-start;gap:12px;flex-direction:column}.hero{padding:25px}.grid{grid-template-columns:1fr}h1{font-size:39px}}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:radial-gradient(circle at 18% -10%,rgba(139,92,246,.38),transparent 34rem),radial-gradient(circle at 92% 12%,rgba(236,72,153,.18),transparent 30rem),radial-gradient(circle at 55% 96%,rgba(56,189,248,.12),transparent 32rem),linear-gradient(180deg,#05050a,#020204 68%,#05050a);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent 82%);opacity:.55}body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 0,rgba(255,255,255,.08),transparent 38rem);mix-blend-mode:screen}a{color:#e9d5ff;text-decoration:none}.wrap{width:min(1220px,calc(100% - 30px));margin:auto;padding:28px 0 58px}.nav{position:sticky;top:14px;z-index:10;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding:12px 14px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,rgba(8,8,15,.82),rgba(20,15,34,.68));backdrop-filter:blur(22px);box-shadow:0 22px 90px rgba(0,0,0,.36)}.brand{display:flex;align-items:center;gap:11px;font-weight:950;letter-spacing:-.05em}.brand:before{content:"✦";display:grid;place-items:center;width:38px;height:38px;border-radius:14px;background:linear-gradient(135deg,var(--purple),var(--pink) 55%,var(--blue));box-shadow:0 14px 50px rgba(139,92,246,.46)}.navlinks{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.navlinks a{padding:9px 12px;border-radius:14px;color:rgba(255,255,255,.74);font-weight:800;font-size:14px}.navlinks a:hover{background:rgba(255,255,255,.08);color:#fff}.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:34px;padding:38px;background:linear-gradient(145deg,rgba(139,92,246,.24),rgba(236,72,153,.08) 38%,rgba(56,189,248,.07) 62%,rgba(255,255,255,.04));box-shadow:var(--shadow)}.hero:before{content:"";position:absolute;inset:1px;border-radius:33px;border:1px solid rgba(255,255,255,.06);pointer-events:none}.hero:after{content:"";position:absolute;right:-100px;top:-120px;width:340px;height:340px;background:radial-gradient(circle,rgba(192,132,252,.38),transparent 68%);filter:blur(2px)}h1{font-size:clamp(34px,5.3vw,68px);letter-spacing:-.07em;line-height:.92;margin:0 0 13px;max-width:930px}h2{letter-spacing:-.04em;margin:0 0 12px;font-size:clamp(22px,2.4vw,31px)}h3{letter-spacing:-.03em;margin:0 0 10px;font-size:20px}.card,.guild,.panel{position:relative;border:1px solid var(--line);background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.04));border-radius:26px;padding:23px;box-shadow:0 24px 90px rgba(0,0,0,.29);backdrop-filter:blur(20px);overflow:hidden}.card:before,.guild:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.07),transparent 38%);pointer-events:none;opacity:.55}.guild{transition:transform .18s ease,border-color .18s ease,background .18s ease}.guild:hover{transform:translateY(-4px);border-color:var(--line2);background:linear-gradient(145deg,rgba(124,58,237,.2),rgba(255,255,255,.055))}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}.section-title{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 0 13px}.btn,button{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#a855f7 55%,#ec4899);color:white;padding:12px 17px;font-weight:950;cursor:pointer;box-shadow:0 17px 46px rgba(124,58,237,.29);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.btn:hover,button:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 22px 58px rgba(124,58,237,.34)}.btn.secondary{background:rgba(255,255,255,.075);box-shadow:none;border:1px solid var(--line)}.muted{color:var(--muted);line-height:1.66}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(139,92,246,.14);color:#ede9fe;border:1px solid rgba(192,132,252,.28);font-size:13px;font-weight:900;box-shadow:inset 0 1px rgba(255,255,255,.08)}code{display:inline-block;max-width:100%;overflow:auto;padding:11px 13px;border-radius:15px;border:1px solid var(--line);background:rgba(0,0,0,.34);color:#ddd6fe}label{display:block;color:rgba(255,255,255,.84);font-size:13px;font-weight:900;letter-spacing:.01em}input,select,textarea{width:100%;margin:8px 0 16px;padding:14px 15px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:#10101b;color:#f8fafc;outline:none;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.018);font:inherit}input::placeholder,textarea::placeholder{color:rgba(255,255,255,.36)}input:focus,select:focus,textarea:focus{border-color:rgba(192,132,252,.75);box-shadow:0 0 0 4px rgba(124,58,237,.18)}textarea{min-height:145px;resize:vertical;line-height:1.55}select{appearance:none;background-color:#10101b;background-image:linear-gradient(45deg,transparent 50%,#c4b5fd 50%),linear-gradient(135deg,#c4b5fd 50%,transparent 50%);background-position:calc(100% - 19px) 52%,calc(100% - 12px) 52%;background-size:7px 7px,7px 7px;background-repeat:no-repeat;padding-right:42px}select option{background:#0d0d18;color:#f8fafc}select option:hover,select option:checked{background:#7c3aed;color:#fff}.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.form-section{margin-top:17px;padding-top:17px;border-top:1px solid var(--line)}.savebar{position:sticky;bottom:14px;display:flex;justify-content:flex-end;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(7,7,13,.8);backdrop-filter:blur(20px)}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.preview-shell{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(0,0,0,.28),rgba(255,255,255,.035));padding:16px}.preview-message{white-space:pre-wrap;color:#f8fafc;line-height:1.55;margin-bottom:12px;padding:13px 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.045)}.preview-box{border:1px solid var(--line);border-left:4px solid var(--purple);border-radius:18px;background:rgba(0,0,0,.24);padding:18px;margin-top:8px}.preview-title{font-weight:950;font-size:20px;letter-spacing:-.025em}.preview-desc{white-space:pre-wrap;color:rgba(255,255,255,.78);line-height:1.55;margin-top:8px}.preview-footer{color:rgba(255,255,255,.48);font-size:12px;margin-top:14px}.preview-img{max-width:100%;border-radius:16px;margin-top:14px;border:1px solid var(--line)}.preview-thumb{float:right;width:88px;height:88px;object-fit:cover;border-radius:16px;margin-left:14px;margin-bottom:10px;border:1px solid var(--line)}.tiny{font-size:12px;color:rgba(255,255,255,.48)}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px}.stat{padding:18px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.045)}.stat b{display:block;font-size:27px;letter-spacing:-.04em}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:20px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:13px 15px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}th{color:#ddd6fe;background:rgba(124,58,237,.12)}td{color:var(--soft)}@media(max-width:760px){.row{grid-template-columns:1fr}.nav{position:relative;top:0;align-items:flex-start;gap:12px;flex-direction:column}.hero{padding:25px}.grid{grid-template-columns:1fr}h1{font-size:39px}}
     </style>
     """
     html_doc = f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{html.escape(title)}</title>{css}</head><body><main class='wrap'><nav class='nav'><div class='brand'>moealturej bot</div><div class='navlinks'><a href='/'>Dashboard</a><a href='/health'>Health</a><a href='/logout'>Logout</a></div></nav>{body}</main></body></html>"
@@ -912,7 +934,7 @@ async def guild_page(request: web.Request) -> web.Response:
     <form class='card' method='post'>
       <div class='row'><label>Bot availability<select name='enabled'><option value='true' {'selected' if config.get('enabled') else ''}>Enabled for this server</option><option value='false' {'selected' if not config.get('enabled') else ''}>Disabled / private only</option></select></label><label>Store URL<input name='store_url' value='{html.escape(config.get('store_url') or DEFAULT_STORE_URL)}' placeholder='https://your-store.com'></label></div>
       <div class='form-section'><h2>Verification</h2><p class='muted'>If a member already has the verified role, the bot now skips re-verifying and still removes the unverified role if configured.</p><div class='row'><label>Verified role<select name='verified_role'>{options(roles, config.get('verified_role'))}</select></label><label>Unverified role to remove<select name='unverified_role'>{options(roles, config.get('unverified_role'))}</select></label></div><div class='row'><label>Auto role on join<select name='auto_role'>{options(roles, config.get('auto_role'))}</select></label><label>Verification logs<select name='verification_log_channel'>{options(text_channels, config.get('verification_log_channel'))}</select></label></div><label>Verification panel channel<select name='verification_channel'>{options(text_channels, config.get('verification_channel'))}</select></label></div>
-      <div class='form-section'><h2>Dashboard and access</h2><div class='row'><label>Bot admin role<select name='bot_admin_role'>{options(roles, config.get('bot_admin_role'))}</select></label><label>Welcome channel<select name='welcome_channel'>{options(text_channels, config.get('welcome_channel'))}</select></label></div></div>
+      <div class='form-section'><h2>Dashboard and access</h2><div class='row'><label>Bot admin role<select name='bot_admin_role'>{options(roles, config.get('bot_admin_role'))}</select></label><label>Command logs<select name='command_log_channel'>{options(text_channels, config.get('command_log_channel'))}</select></label></div></div><div class='form-section'><h2>Welcome system</h2><div class='row'><label>Welcome system<select name='welcome_enabled'><option value='true' {'selected' if config.get('welcome_enabled', True) else ''}>Enabled</option><option value='false' {'selected' if not config.get('welcome_enabled', True) else ''}>Disabled</option></select></label><label>Welcome channel<select name='welcome_channel'>{options(text_channels, config.get('welcome_channel'))}</select></label></div><label>Welcome message<textarea name='welcome_message' placeholder='Use {mention}, {server}, and {username}'>{html.escape(config.get('welcome_message') or DEFAULT_GUILD_CONFIG['welcome_message'])}</textarea></label></div><div class='form-section'><h2>Moderation</h2><label>Moderation logs<select name='moderation_log_channel'>{options(text_channels, config.get('moderation_log_channel'))}</select></label></div>
       <div class='form-section'><h2>Tickets</h2><div class='row'><label>Ticket category<select name='ticket_category'>{options(categories, config.get('ticket_category'))}</select></label><label>Ticket transcript logs<select name='ticket_log_channel'>{options(text_channels, config.get('ticket_log_channel'))}</select></label></div><div class='row'><label>General support role<select name='ticket_role_general'>{options(roles, config.get('ticket_role_general'))}</select></label><label>HWID support role<select name='ticket_role_hwid'>{options(roles, config.get('ticket_role_hwid'))}</select></label></div><label>Key-not-received support role<select name='ticket_role_key_not_received'>{options(roles, config.get('ticket_role_key_not_received'))}</select></label></div>
       <div class='savebar'><button type='submit'>Save dashboard settings</button></div>
     </form>
@@ -920,7 +942,7 @@ async def guild_page(request: web.Request) -> web.Response:
     <div class='grid'>
       <section class='card'><h2>📣 Announcement sender</h2><p class='muted'>Create a polished announcement embed with live preview and send it to any text channel.</p><a class='btn' href='/guild/{guild_id}/announcements'>Open announcement sender</a></section>
       <section class='card'><h2>✨ Embed sender</h2><p class='muted'>Build a custom embed with title, message, color, image, footer, and preview before sending.</p><a class='btn' href='/guild/{guild_id}/embeds'>Open embed sender</a></section>
-      <section class='card'><h2>💌 User DM sender</h2><p class='muted'>Send fully custom private DMs with optional embeds, images, buttons-style links in text, and a live Discord-style preview.</p><a class='btn' href='/guild/{guild_id}/dms'>Open DM sender</a></section>
+      <section class='card'><h2>📊 Activity & diagnostics</h2><p class='muted'>Review recent commands, dashboard sends, moderation actions, tickets, warnings, and bot health.</p><a class='btn' href='/guild/{guild_id}/activity'>Open activity</a></section><section class='card'><h2>💌 User DM sender</h2><p class='muted'>Send fully custom private DMs with optional embeds, images, buttons-style links in text, and a live Discord-style preview.</p><a class='btn' href='/guild/{guild_id}/dms'>Open DM sender</a></section>
     </div>
     <div class='section-title'><h2>Setup links</h2></div><section class='card'><p class='muted'>OAuth verification URL:</p><code>{PUBLIC_BASE_URL}/verify/start?guild_id={guild_id}</code></section>
     """
@@ -944,6 +966,10 @@ async def guild_save(request: web.Request) -> web.Response:
         "auto_role": as_int("auto_role"),
         "bot_admin_role": as_int("bot_admin_role"),
         "welcome_channel": as_int("welcome_channel"),
+        "welcome_enabled": str(data.get("welcome_enabled")) == "true",
+        "welcome_message": str(data.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"]).strip()[:1500],
+        "moderation_log_channel": as_int("moderation_log_channel"),
+        "command_log_channel": as_int("command_log_channel"),
         "verification_channel": as_int("verification_channel"),
         "verification_log_channel": as_int("verification_log_channel"),
         "ticket_category": as_int("ticket_category"),
@@ -1235,6 +1261,31 @@ async def dm_send(request: web.Request) -> web.Response:
     await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": "send_dm", "target_user_id": target_id, "has_plain": bool(plain_message), "has_embed": bool(embed)})
     raise web.HTTPFound(f"/guild/{guild.id}/dms?sent=1")
 
+async def activity_page(request: web.Request) -> web.Response:
+    user = await get_dashboard_user(request)
+    guild_id = int(request.match_info["guild_id"])
+    if not user or not await dashboard_can_access(user, guild_id):
+        raise web.HTTPForbidden(text=owner_private_message())
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    events = []
+    for collection in ("dashboard_events", "moderation_events", "ticket_events", "verification_events"):
+        async for item in mdb[collection].find({"guild_id": guild_id}, {"_id": 0}).sort("created_at", -1).limit(30):
+            item["source"] = collection.replace("_events", "")
+            events.append(item)
+    events.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+    rows = []
+    for item in events[:75]:
+        actor = item.get("user_id") or item.get("moderator_id") or item.get("closed_by") or "—"
+        detail = item.get("reason") or item.get("title") or item.get("ticket_type") or item.get("status") or "—"
+        rows.append(f"<tr><td>{html.escape(str(item.get('created_at',''))[:19].replace('T',' '))}</td><td>{html.escape(str(item.get('source','')))}</td><td>{html.escape(str(item.get('event','activity')))}</td><td>{html.escape(str(actor))}</td><td>{html.escape(str(detail))[:180]}</td></tr>")
+    warning_count = await mdb.warnings.count_documents({"guild_id": guild_id})
+    open_tickets = len((await get_guild_config(guild_id)).get("open_tickets", {}))
+    body = f"""<section class='hero'><span class='pill'>📊 Operations center</span><h1>{html.escape(guild.name)} activity</h1><p class='muted'>One place to check bot health, recent actions, support load, and safety events.</p><div class='stats'><div class='stat'><span class='muted'>Latency</span><b>{round(bot.latency*1000) if bot.latency else '—'} ms</b></div><div class='stat'><span class='muted'>Members</span><b>{guild.member_count or len(guild.members)}</b></div><div class='stat'><span class='muted'>Open tickets</span><b>{open_tickets}</b></div><div class='stat'><span class='muted'>Warnings</span><b>{warning_count}</b></div></div></section><div class='section-title'><h2>Recent activity</h2><a class='btn secondary' href='/guild/{guild_id}'>Back to settings</a></div><section class='card'><div class='table-wrap'><table><thead><tr><th>Time (UTC)</th><th>Source</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=5>No recorded activity yet.</td></tr>'}</tbody></table></div></section>"""
+    return page(f"{guild.name} Activity", body)
+
+
 async def verify_start(request: web.Request) -> web.Response:
     guild_id = int(request.query.get("guild_id", "0"))
     requested_user_id = int(request.query.get("user_id", "0") or 0)
@@ -1342,6 +1393,7 @@ async def start_web() -> None:
     app.router.add_get("/guild/{guild_id}/embeds", embed_page)
     app.router.add_post("/guild/{guild_id}/embeds", embed_send)
     app.router.add_get("/guild/{guild_id}/dms", dm_page)
+    app.router.add_get("/guild/{guild_id}/activity", activity_page)
     app.router.add_post("/guild/{guild_id}/dms", dm_send)
     app.router.add_get("/verify/start", verify_start)
     app.router.add_get("/verify/callback", verify_callback)
@@ -1404,8 +1456,10 @@ async def on_member_join(member: discord.Member):
     if config.get("auto_role"):
         await safe_add_role(member, config.get("auto_role"), "Auto role on join")
     channel = member.guild.get_channel(config.get("welcome_channel") or 0)
-    if isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
-        embed = make_embed("Welcome", f"Welcome {member.mention} to **{member.guild.name}**. Please verify if required and open a ticket if you need support.")
+    if config.get("welcome_enabled", True) and isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
+        template = str(config.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"])
+        message = template.replace("{mention}", member.mention).replace("{server}", member.guild.name).replace("{username}", member.display_name)[:4000]
+        embed = make_embed("Welcome", message)
         embed.set_thumbnail(url=member.display_avatar.url)
         await safe_channel_send(channel, embed=embed)
 
@@ -1619,6 +1673,212 @@ async def config_show(interaction: discord.Interaction):
     for key in ["enabled", "verified_role", "unverified_role", "auto_role", "bot_admin_role", "verification_log_channel", "ticket_log_channel", "ticket_category", "store_url"]:
         embed.add_field(name=key, value=str(config.get(key)), inline=True)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+# =========================
+# PRODUCTION COMMANDS / ERROR REPORTING
+# =========================
+async def log_command_event(interaction: discord.Interaction, event: str, **extra: Any) -> None:
+    if not interaction.guild:
+        return
+    payload = {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": event, **extra}
+    await save_event("dashboard_events", payload)
+    config = await get_guild_config(interaction.guild.id)
+    channel = interaction.guild.get_channel(int(config.get("command_log_channel") or 0))
+    if isinstance(channel, discord.TextChannel):
+        embed = make_embed("Command activity", f"**{event}** by {interaction.user.mention}", INFO_COLOR)
+        if extra:
+            embed.add_field(name="Details", value="\n".join(f"**{k}:** {v}" for k, v in extra.items())[:1000], inline=False)
+        await safe_channel_send(channel, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+async def log_moderation(guild: discord.Guild, moderator: discord.Member, action: str, target: discord.abc.User, reason: str) -> None:
+    await save_event("moderation_events", {"guild_id": guild.id, "moderator_id": moderator.id, "target_user_id": target.id, "event": action, "reason": reason[:500]})
+    config = await get_guild_config(guild.id)
+    channel = guild.get_channel(int(config.get("moderation_log_channel") or 0))
+    if isinstance(channel, discord.TextChannel):
+        embed = make_embed(f"Moderation: {action}", f"**Target:** {target.mention} (`{target.id}`)\n**Moderator:** {moderator.mention}\n**Reason:** {reason}", ERROR_COLOR if action in {"ban", "kick", "timeout"} else INFO_COLOR)
+        await safe_channel_send(channel, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        return await safe_interaction_send(interaction, f"Slow down — try again in **{error.retry_after:.1f}s**.", ephemeral=True)
+    if isinstance(error, app_commands.MissingPermissions):
+        return await safe_interaction_send(interaction, "You do not have permission to use that command.", ephemeral=True)
+    if isinstance(error, app_commands.CheckFailure):
+        if not interaction.response.is_done():
+            await safe_interaction_send(interaction, "That command is not available to you here.", ephemeral=True)
+        return
+    original = getattr(error, "original", error)
+    log.exception("Unhandled app command error: %s", original)
+    if interaction.guild:
+        await save_event("dashboard_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "command_error", "reason": str(original)[:500]})
+    await safe_interaction_send(interaction, "That command hit an unexpected error. It was logged for review.", ephemeral=True)
+
+
+@bot.event
+async def on_error(event_method: str, *args, **kwargs):
+    log.exception("Unhandled Discord event error in %s", event_method)
+
+
+@bot.tree.command(name="serverinfo", description="Show useful information about this server.")
+@guild_enabled_or_owner()
+@app_commands.checks.cooldown(1, COMMAND_COOLDOWN_SECONDS, key=lambda i: (i.guild_id, i.user.id))
+async def serverinfo(interaction: discord.Interaction):
+    guild = interaction.guild
+    if not guild:
+        return await safe_interaction_send(interaction, "This command only works in a server.", ephemeral=True)
+    humans = sum(1 for m in guild.members if not m.bot)
+    embed = make_embed(guild.name, "Live server overview.")
+    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+    embed.add_field(name="Members", value=f"{guild.member_count or len(guild.members)} total\n{humans} humans", inline=True)
+    embed.add_field(name="Channels", value=f"{len(guild.text_channels)} text\n{len(guild.voice_channels)} voice", inline=True)
+    embed.add_field(name="Boosts", value=str(guild.premium_subscription_count or 0), inline=True)
+    embed.add_field(name="Created", value=discord.utils.format_dt(guild.created_at, style="R"), inline=True)
+    embed.set_footer(text=f"Server ID: {guild.id}")
+    await safe_interaction_send(interaction, embed=embed)
+
+
+@bot.tree.command(name="userinfo", description="Show account and server information for a member.")
+@guild_enabled_or_owner()
+async def userinfo(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    member = member or interaction.user
+    embed = make_embed(str(member), f"Information for {member.mention}.")
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="Joined", value=discord.utils.format_dt(member.joined_at, style="R") if member.joined_at else "Unknown", inline=True)
+    embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, style="R"), inline=True)
+    embed.add_field(name="Top role", value=member.top_role.mention, inline=True)
+    embed.set_footer(text=f"User ID: {member.id}")
+    await safe_interaction_send(interaction, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+@bot.tree.command(name="avatar", description="Show a member's full-size avatar.")
+@guild_enabled_or_owner()
+async def avatar(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    member = member or interaction.user
+    embed = make_embed(f"{member.display_name}'s avatar", f"[Open original]({member.display_avatar.url})")
+    embed.set_image(url=member.display_avatar.url)
+    await safe_interaction_send(interaction, embed=embed)
+
+
+@bot.tree.command(name="purge", description="Delete a batch of recent messages safely.")
+@admin_only()
+@app_commands.describe(amount="Number of messages to delete")
+async def purge(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100]):
+    if not isinstance(interaction.channel, discord.TextChannel):
+        return await safe_interaction_send(interaction, "Use this in a text channel.", ephemeral=True)
+    await safe_interaction_defer(interaction, ephemeral=True)
+    amount = min(int(amount), MAX_PURGE_AMOUNT)
+    deleted = await discord_guarded("purge messages", f"purge:{interaction.channel.id}", lambda: interaction.channel.purge(limit=amount, reason=f"Purged by {interaction.user}"), min_gap=3.0, default=[])
+    await log_command_event(interaction, "purge", channel=interaction.channel.id, amount=len(deleted or []))
+    await safe_interaction_send(interaction, f"Deleted **{len(deleted or [])}** messages.", ephemeral=True)
+
+
+@bot.tree.command(name="timeout", description="Temporarily timeout a member.")
+@admin_only()
+async def timeout_member(interaction: discord.Interaction, member: discord.Member, minutes: app_commands.Range[int, 1, 40320], reason: str = "No reason provided"):
+    if member.id in {interaction.user.id, interaction.guild.owner_id} or member.top_role >= interaction.user.top_role and not is_owner_user(interaction.user.id):
+        return await safe_interaction_send(interaction, "You cannot timeout that member.", ephemeral=True)
+    until = utcnow() + timedelta(minutes=int(minutes))
+    async def apply_timeout():
+        await member.timeout(until, reason=reason)
+        return True
+    ok = await discord_guarded("timeout member", f"moderation:{interaction.guild.id}", apply_timeout, min_gap=2.0, default=False)
+    if not ok:
+        return await safe_interaction_send(interaction, "The timeout failed. Check role order and permissions.", ephemeral=True)
+    await log_moderation(interaction.guild, interaction.user, "timeout", member, reason)
+    await safe_interaction_send(interaction, f"Timed out {member.mention} for **{minutes} minutes**.", ephemeral=True)
+
+
+@bot.tree.command(name="untimeout", description="Remove a member's timeout.")
+@admin_only()
+async def untimeout_member(interaction: discord.Interaction, member: discord.Member, reason: str = "Timeout removed"):
+    async def remove_member_timeout():
+        await member.timeout(None, reason=reason)
+        return True
+    ok = await discord_guarded("remove timeout", f"moderation:{interaction.guild.id}", remove_member_timeout, min_gap=2.0, default=False)
+    if not ok:
+        return await safe_interaction_send(interaction, "The timeout could not be removed. Check role order and permissions.", ephemeral=True)
+    await log_moderation(interaction.guild, interaction.user, "untimeout", member, reason)
+    await safe_interaction_send(interaction, f"Removed {member.mention}'s timeout.", ephemeral=True)
+
+
+@bot.tree.command(name="warn", description="Record a warning for a member.")
+@admin_only()
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
+    await mdb.warnings.insert_one({"guild_id": interaction.guild.id, "user_id": member.id, "moderator_id": interaction.user.id, "reason": reason[:1000], "created_at": now_iso()})
+    count = await mdb.warnings.count_documents({"guild_id": interaction.guild.id, "user_id": member.id})
+    await log_moderation(interaction.guild, interaction.user, "warn", member, reason)
+    await safe_user_send(member, embed=make_embed(f"Warning in {interaction.guild.name}", reason, ERROR_COLOR))
+    await safe_interaction_send(interaction, f"Warned {member.mention}. They now have **{count}** warning(s).", ephemeral=True)
+
+
+@bot.tree.command(name="warnings", description="View recorded warnings for a member.")
+@admin_only()
+async def warnings(interaction: discord.Interaction, member: discord.Member):
+    items = await mdb.warnings.find({"guild_id": interaction.guild.id, "user_id": member.id}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(length=10)
+    embed = make_embed(f"Warnings for {member}", f"Showing {len(items)} most recent warning(s).")
+    for idx, item in enumerate(items, 1):
+        embed.add_field(name=f"#{idx} • {str(item.get('created_at',''))[:10]}", value=f"{item.get('reason','No reason')[:700]}\nModerator: `{item.get('moderator_id','unknown')}`", inline=False)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="slowmode", description="Set this channel's slowmode delay.")
+@admin_only()
+async def slowmode(interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]):
+    if not isinstance(interaction.channel, discord.TextChannel):
+        return await safe_interaction_send(interaction, "Use this in a text channel.", ephemeral=True)
+    await safe_channel_edit(interaction.channel, slowmode_delay=int(seconds), reason=f"Changed by {interaction.user}")
+    await log_command_event(interaction, "slowmode", channel=interaction.channel.id, seconds=seconds)
+    await safe_interaction_send(interaction, f"Slowmode set to **{seconds} seconds**.", ephemeral=True)
+
+
+@bot.tree.command(name="lock", description="Lock the current text channel for regular members.")
+@admin_only()
+async def lock_channel(interaction: discord.Interaction, reason: str = "Channel locked"):
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel):
+        return await safe_interaction_send(interaction, "Use this in a text channel.", ephemeral=True)
+    overwrite = channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = False
+    await discord_guarded("lock channel", f"permission:{channel.id}", lambda: channel.set_permissions(interaction.guild.default_role, overwrite=overwrite, reason=reason), min_gap=3.0, default=None)
+    await log_command_event(interaction, "lock", channel=channel.id, reason=reason)
+    await safe_interaction_send(interaction, "🔒 Channel locked.")
+
+
+@bot.tree.command(name="unlock", description="Unlock the current text channel.")
+@admin_only()
+async def unlock_channel(interaction: discord.Interaction, reason: str = "Channel unlocked"):
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel):
+        return await safe_interaction_send(interaction, "Use this in a text channel.", ephemeral=True)
+    overwrite = channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = None
+    await discord_guarded("unlock channel", f"permission:{channel.id}", lambda: channel.set_permissions(interaction.guild.default_role, overwrite=overwrite, reason=reason), min_gap=3.0, default=None)
+    await log_command_event(interaction, "unlock", channel=channel.id, reason=reason)
+    await safe_interaction_send(interaction, "🔓 Channel unlocked.")
+
+
+@bot.tree.command(name="ticket_add", description="Add a member to the current support ticket.")
+@admin_only()
+async def ticket_add(interaction: discord.Interaction, member: discord.Member):
+    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "ticket_owner=" not in interaction.channel.topic:
+        return await safe_interaction_send(interaction, "This is not a managed ticket channel.", ephemeral=True)
+    await discord_guarded("ticket add member", f"permission:{interaction.channel.id}", lambda: interaction.channel.set_permissions(member, view_channel=True, send_messages=True, read_message_history=True), min_gap=3.0, default=None)
+    await log_command_event(interaction, "ticket_add", channel=interaction.channel.id, member=member.id)
+    await safe_interaction_send(interaction, f"Added {member.mention} to this ticket.")
+
+
+@bot.tree.command(name="ticket_rename", description="Rename the current support ticket.")
+@admin_only()
+async def ticket_rename(interaction: discord.Interaction, name: str):
+    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "ticket_owner=" not in interaction.channel.topic:
+        return await safe_interaction_send(interaction, "This is not a managed ticket channel.", ephemeral=True)
+    clean = clean_channel_name(name)[:90]
+    await safe_channel_edit(interaction.channel, name=clean, reason=f"Ticket renamed by {interaction.user}")
+    await log_command_event(interaction, "ticket_rename", channel=interaction.channel.id, name=clean)
+    await safe_interaction_send(interaction, f"Ticket renamed to **{clean}**.", ephemeral=True)
 
 # =========================
 # START
