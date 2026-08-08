@@ -1,4 +1,4 @@
-# moealturej Discord Bot — Production Build 3.0
+# moealturej Discord Bot — Production Build 3.1
 
 A private, MongoDB-backed Discord operations bot with a web dashboard, secure OAuth verification, professional support tickets, moderation tools, live server statistics, message composers, and an interactive blackjack economy.
 
@@ -24,14 +24,20 @@ A private, MongoDB-backed Discord operations bot with a web dashboard, secure OA
 - A ticket is not deleted if transcript generation fails.
 - Ticket actions are written to the activity history.
 
-### Blackjack and virtual economy
+### Realistic blackjack and virtual economy
 
-- `/blackjack bet:<amount>` with **Hit**, **Stand**, **Double**, and **Surrender**.
-- Six-deck cryptographically shuffled shoe.
-- Natural blackjack pays 3:2; dealer behavior is configurable.
-- Atomic MongoDB balance debits, active-game locking, and settlement history.
-- `/balance`, `/daily`, and `/casino_leaderboard`.
-- Configurable currency name, starting balance, daily reward, and bet limits.
+- `/blackjack bet:<amount>` with **Hit**, **Stand**, **Double**, **Split**, **Surrender**, and **Insurance**.
+- Alternating initial deal, concealed dealer hole card, dealer blackjack checks, soft-hand logic, and split-ace restrictions.
+- Multiple split hands are resolved independently with correct combined payouts and atomic MongoDB settlement.
+- Three server-wide difficulty presets:
+  - **Casual:** four decks, dealer stands on soft 17, 3:2 naturals, flexible doubles, surrender, and up to four hands.
+  - **Casino:** six decks, dealer hits soft 17, 3:2 naturals, insurance, surrender, and up to three hands.
+  - **Hard:** eight decks, dealer hits soft 17, 6:5 naturals, doubles limited to totals 9–11, no surrender, and two-hand split limit.
+- A **Custom** preset exposes decks, blackjack payout, soft-17 behavior, hole-card peeking, insurance, surrender, splitting, split limits, and double-down restrictions.
+- `/blackjack_rules` clearly shows the active table rules and fairness model.
+- Cryptographically shuffled cards; the dealer follows fixed house rules and never adapts to a player's balance or future cards.
+- Atomic additional wagers for splits, doubles, and insurance, plus automatic stale-session refunds after restarts or lost interactions.
+- `/balance`, `/daily`, and `/casino_leaderboard` remain available.
 - Virtual credits have no real-world cash value.
 
 ### Dashboard and production operations

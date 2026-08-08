@@ -24,9 +24,9 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 
-from core.blackjack import BlackjackView, CasinoStore, format_amount
+from core.blackjack import BlackjackView, CasinoStore, format_amount, rules_for_difficulty
 
-BUILD_VERSION = "3.0.1-production-casino"
+BUILD_VERSION = "3.1.0-realistic-blackjack"
 
 load_dotenv()
 
@@ -401,7 +401,16 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "casino_daily_reward": 250,
     "blackjack_min_bet": 10,
     "blackjack_max_bet": 5000,
-    "blackjack_dealer_hits_soft_17": False,
+    "blackjack_difficulty": "hard",
+    "blackjack_decks": 8,
+    "blackjack_payout": "6:5",
+    "blackjack_dealer_hits_soft_17": True,
+    "blackjack_dealer_peeks": True,
+    "blackjack_allow_insurance": True,
+    "blackjack_allow_surrender": False,
+    "blackjack_allow_split": True,
+    "blackjack_max_split_hands": 2,
+    "blackjack_double_rule": "9-11",
 }
 
 # =========================
@@ -1235,7 +1244,19 @@ async def guild_page(request: web.Request) -> web.Response:
         <div class='row'><label>Casino<select name='casino_enabled'><option value='true' {selected(bool(config.get('casino_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('casino_enabled', True)))}>Disabled</option></select></label><label>Currency name<input name='casino_currency' maxlength='24' value='{html.escape(str(config.get('casino_currency') or 'credits'))}'></label></div>
         <div class='row'><label>Starting balance<input type='number' min='0' max='100000000' name='casino_starting_balance' value='{int(config.get('casino_starting_balance', 1000))}'></label><label>Daily reward<input type='number' min='0' max='100000000' name='casino_daily_reward' value='{int(config.get('casino_daily_reward', 250))}'></label></div>
         <div class='row'><label>Minimum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_min_bet' value='{int(config.get('blackjack_min_bet', 10))}'></label><label>Maximum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_max_bet' value='{int(config.get('blackjack_max_bet', 5000))}'></label></div>
-        <label class='checkline'><input type='checkbox' name='blackjack_dealer_hits_soft_17' {checked(bool(config.get('blackjack_dealer_hits_soft_17')))}> Dealer hits soft 17</label>
+        <div class='row'><label>Difficulty preset<select name='blackjack_difficulty'>
+          <option value='casual' {selected(str(config.get('blackjack_difficulty', 'hard')) == 'casual')}>Casual — friendlier rules</option>
+          <option value='casino' {selected(str(config.get('blackjack_difficulty', 'hard')) == 'casino')}>Casino — realistic standard table</option>
+          <option value='hard' {selected(str(config.get('blackjack_difficulty', 'hard')) == 'hard')}>Hard — stronger house edge</option>
+          <option value='custom' {selected(str(config.get('blackjack_difficulty', 'hard')) == 'custom')}>Custom — use advanced rules below</option>
+        </select></label><label>Decks in shoe<input type='number' min='1' max='8' name='blackjack_decks' value='{int(config.get('blackjack_decks', 8))}'></label></div>
+        <div class='row'><label>Natural blackjack payout<select name='blackjack_payout'><option value='3:2' {selected(str(config.get('blackjack_payout', '6:5')) == '3:2')}>3:2 — player friendly</option><option value='6:5' {selected(str(config.get('blackjack_payout', '6:5')) == '6:5')}>6:5 — harder</option></select></label><label>Double-down rule<select name='blackjack_double_rule'><option value='any' {selected(str(config.get('blackjack_double_rule', '9-11')) == 'any')}>Any first two cards</option><option value='9-11' {selected(str(config.get('blackjack_double_rule', '9-11')) == '9-11')}>Totals 9–11 only</option><option value='10-11' {selected(str(config.get('blackjack_double_rule', '9-11')) == '10-11')}>Totals 10–11 only</option></select></label></div>
+        <div class='row'><label>Maximum split hands<input type='number' min='2' max='4' name='blackjack_max_split_hands' value='{int(config.get('blackjack_max_split_hands', 2))}'></label><div class='subcard'><b>Preset behavior</b><p class='muted'>Casual, Casino, and Hard apply balanced rule bundles automatically. Select Custom to use every advanced setting below.</p></div></div>
+        <label class='checkline'><input type='checkbox' name='blackjack_dealer_hits_soft_17' {checked(bool(config.get('blackjack_dealer_hits_soft_17', True)))}> Dealer hits soft 17</label>
+        <label class='checkline'><input type='checkbox' name='blackjack_dealer_peeks' {checked(bool(config.get('blackjack_dealer_peeks', True)))}> Dealer checks the hole card under Ace or ten-value upcards</label>
+        <label class='checkline'><input type='checkbox' name='blackjack_allow_insurance' {checked(bool(config.get('blackjack_allow_insurance', True)))}> Offer insurance when the dealer shows an Ace</label>
+        <label class='checkline'><input type='checkbox' name='blackjack_allow_surrender' {checked(bool(config.get('blackjack_allow_surrender', False)))}> Allow late surrender</label>
+        <label class='checkline'><input type='checkbox' name='blackjack_allow_split' {checked(bool(config.get('blackjack_allow_split', True)))}> Allow matching-value hands to split</label>
       </div></details>
 
       <details><summary><span><b>06</b> Logs & moderation</span><small>Where operational events are recorded</small></summary><div class='details-body'>
@@ -1332,7 +1353,16 @@ async def guild_save(request: web.Request) -> web.Response:
         "casino_daily_reward": as_int("casino_daily_reward", 250, 0),
         "blackjack_min_bet": min_bet,
         "blackjack_max_bet": max_bet,
+        "blackjack_difficulty": text("blackjack_difficulty", "hard", 12) if text("blackjack_difficulty", "hard", 12) in {"casual", "casino", "hard", "custom"} else "hard",
+        "blackjack_decks": as_int("blackjack_decks", 8, 1, 8),
+        "blackjack_payout": text("blackjack_payout", "6:5", 3) if text("blackjack_payout", "6:5", 3) in {"3:2", "6:5"} else "6:5",
         "blackjack_dealer_hits_soft_17": as_bool("blackjack_dealer_hits_soft_17", checkbox=True),
+        "blackjack_dealer_peeks": as_bool("blackjack_dealer_peeks", checkbox=True),
+        "blackjack_allow_insurance": as_bool("blackjack_allow_insurance", checkbox=True),
+        "blackjack_allow_surrender": as_bool("blackjack_allow_surrender", checkbox=True),
+        "blackjack_allow_split": as_bool("blackjack_allow_split", checkbox=True),
+        "blackjack_max_split_hands": as_int("blackjack_max_split_hands", 2, 2, 4),
+        "blackjack_double_rule": text("blackjack_double_rule", "9-11", 5) if text("blackjack_double_rule", "9-11", 5) in {"any", "9-11", "10-11"} else "9-11",
     }
     await set_config(guild_id, updates)
     await save_event("dashboard_events", {"guild_id": guild_id, "user_id": int(user["user_id"]), "event": "settings_updated", "fields": sorted(updates)})
@@ -1887,6 +1917,7 @@ async def on_ready():
 
     if not rotate_status.is_running(): rotate_status.start()
     if not update_stats.is_running(): update_stats.start()
+    if not cleanup_blackjack_sessions.is_running(): cleanup_blackjack_sessions.start()
 
     # Self-pinging can keep free web services in a restart/login loop. Leave it
     # disabled by default. Use an external uptime monitor only after the bot is stable.
@@ -1946,6 +1977,18 @@ async def update_stats():
                 except discord.HTTPException: pass
 
 
+@tasks.loop(minutes=2)
+async def cleanup_blackjack_sessions():
+    if mdb is None:
+        return
+    try:
+        refunded = await CasinoStore(mdb).refund_stale_sessions()
+        if refunded:
+            log.warning("Refunded %s abandoned blackjack session(s).", refunded)
+    except Exception as exc:
+        await report_exception("blackjack_stale_cleanup", exc)
+
+
 @tasks.loop(minutes=5)
 async def self_ping():
     url = KEEP_ALIVE_URL
@@ -1983,7 +2026,7 @@ async def help_command(interaction: discord.Interaction):
     embed = make_branded_embed(config, "Command Center", "Useful commands are grouped below so members can find what they need quickly.")
     embed.add_field(name="Essentials", value="`/ping` latency • `/store` store link • `/serverinfo` server details • `/userinfo` member details • `/avatar` avatar", inline=False)
     if config.get("casino_enabled", True):
-        embed.add_field(name="Blackjack", value="`/blackjack` play • `/balance` wallet • `/daily` daily credits • `/casino_leaderboard` rankings", inline=False)
+        embed.add_field(name="Blackjack", value="`/blackjack` play • `/blackjack_rules` rules • `/balance` wallet • `/daily` reward • `/casino_leaderboard` rankings", inline=False)
     embed.add_field(name="Support", value="Use the server's Support Center panel to open a private ticket.", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
@@ -2136,13 +2179,29 @@ async def stats_setup(interaction: discord.Interaction, category: Optional[disco
 async def config_show(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id)
     embed = make_branded_embed(config, "Server Config", "Current MongoDB settings.")
-    for key in ["enabled", "verified_role", "unverified_role", "auto_role", "bot_admin_role", "verification_log_channel", "ticket_log_channel", "ticket_category", "store_url"]:
+    for key in ["enabled", "verified_role", "unverified_role", "auto_role", "bot_admin_role", "verification_log_channel", "ticket_log_channel", "ticket_category", "store_url", "blackjack_difficulty"]:
         embed.add_field(name=key, value=str(config.get(key)), inline=True)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 # =========================
 # BLACKJACK / VIRTUAL ECONOMY
 # =========================
+def blackjack_rules_from_config(config: Dict[str, Any]):
+    return rules_for_difficulty(
+        str(config.get("blackjack_difficulty") or "hard"),
+        {
+            "decks": int(config.get("blackjack_decks", 8)),
+            "payout": str(config.get("blackjack_payout") or "6:5"),
+            "dealer_hits_soft_17": bool(config.get("blackjack_dealer_hits_soft_17", True)),
+            "dealer_peeks": bool(config.get("blackjack_dealer_peeks", True)),
+            "allow_insurance": bool(config.get("blackjack_allow_insurance", True)),
+            "allow_surrender": bool(config.get("blackjack_allow_surrender", False)),
+            "allow_split": bool(config.get("blackjack_allow_split", True)),
+            "max_split_hands": int(config.get("blackjack_max_split_hands", 2)),
+            "double_rule": str(config.get("blackjack_double_rule") or "9-11"),
+        },
+    )
+
 @bot.tree.command(name="blackjack", description="Play an interactive game of blackjack with virtual server credits.")
 @app_commands.describe(bet="Credits to wager", private="Only show the table to you")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
@@ -2173,6 +2232,7 @@ async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[in
             return await interaction.edit_original_response(content=message)
         session_id = str(wallet["session_id"])
         currency = str(config.get("casino_currency") or "credits")[:24]
+        rules = blackjack_rules_from_config(config)
         view = BlackjackView(
             store=store,
             guild_id=interaction.guild.id,
@@ -2184,7 +2244,7 @@ async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[in
             balance_after_bet=int(wallet.get("balance", 0)),
             embed_factory=lambda title, description, color: make_branded_embed(config, title, description, color),
             report_error=report_exception,
-            dealer_hits_soft_17=bool(config.get("blackjack_dealer_hits_soft_17")),
+            rules=rules,
         )
         await view.resolve_initial()
         await view.open_table(interaction)
@@ -2195,6 +2255,35 @@ async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[in
             await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True)
         incident = await report_exception("blackjack_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
         await interaction.edit_original_response(content=f"The table could not be opened. Your bet was refunded. Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="blackjack_rules", description="Show the blackjack difficulty and active house rules.")
+@guild_enabled_or_owner()
+async def blackjack_rules(interaction: discord.Interaction):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Blackjack rules are server-specific.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    rules = blackjack_rules_from_config(config)
+    soft_rule = "Hits soft 17" if rules.dealer_hits_soft_17 else "Stands on soft 17"
+    peek_rule = "Checks under Ace/10" if rules.dealer_peeks else "No hole-card peek"
+    embed = make_branded_embed(
+        config,
+        f"Blackjack Rules · {rules.difficulty.title()}",
+        "The dealer follows these rules exactly. Hard mode increases difficulty through authentic house rules, not hidden cheating.",
+    )
+    embed.add_field(name="Shoe", value=f"{rules.decks} decks", inline=True)
+    embed.add_field(name="Dealer", value=f"{soft_rule}\n{peek_rule}", inline=True)
+    embed.add_field(name="Natural payout", value=rules.payout_label, inline=True)
+    embed.add_field(name="Double down", value=rules.double_label, inline=True)
+    embed.add_field(name="Splitting", value=f"Up to {rules.max_split_hands} hands" if rules.allow_split else "Disabled", inline=True)
+    embed.add_field(name="Insurance", value="Available" if rules.allow_insurance else "Disabled", inline=True)
+    embed.add_field(name="Late surrender", value="Available" if rules.allow_surrender else "Disabled", inline=True)
+    embed.add_field(
+        name="Fairness",
+        value="The shoe uses a cryptographic shuffle. The dealer cannot see future cards or change decisions based on your balance.",
+        inline=False,
+    )
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="balance", description="Check your virtual casino balance and blackjack record.")
