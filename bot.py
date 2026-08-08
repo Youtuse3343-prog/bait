@@ -8,20 +8,25 @@ import json
 import logging
 import os
 import random
+import sys
+import traceback
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import discord
-from aiohttp import ClientError, ClientSession, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 
-BUILD_VERSION = "2.1.1-dashboard-placeholder-fix"
+from core.blackjack import BlackjackView, CasinoStore, format_amount
+
+BUILD_VERSION = "3.0.0-production-casino"
 
 load_dotenv()
 
@@ -35,7 +40,7 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "moealturej_bot").strip()
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "").strip()
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "").strip()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/")
-DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", secrets.token_urlsafe(48)).strip()
+DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "").strip()
 OWNER_USER_ID = int(os.getenv("OWNER_USER_ID", "1222903158125105194"))
 OWNER_CONTACT = os.getenv("OWNER_CONTACT", "Contact moealturej, the owner, to talk about using this bot for your server.").strip()
 
@@ -48,6 +53,8 @@ WEB_PORT = int(os.getenv("PORT", os.getenv("WEB_PORT", "8080")))
 KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "").strip()
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "false").strip().lower() in {"1", "true", "yes", "on"}
 SYNC_COMMANDS = os.getenv("SYNC_COMMANDS", "false").strip().lower() in {"1", "true", "yes", "on"}
+DASHBOARD_OWNER_ONLY = os.getenv("DASHBOARD_OWNER_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
+WEB_SESSION_DAYS = max(1, min(30, int(os.getenv("WEB_SESSION_DAYS", "7"))))
 
 # Startup protection: if Render/Cloudflare temporarily blocks this server IP
 # from discord.com, do NOT crash/restart-loop. Keep the web health server
@@ -60,6 +67,7 @@ EMBED_COLOR = 0x7C3AED
 ERROR_COLOR = 0xEF4444
 SUCCESS_COLOR = 0x22C55E
 INFO_COLOR = 0x38BDF8
+WARNING_COLOR = 0xF59E0B
 STARTED_AT = datetime.now(timezone.utc)
 
 log = logging.getLogger("moealturej")
@@ -360,7 +368,40 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "welcome_enabled": True,
     "moderation_log_channel": None,
     "command_log_channel": None,
-    "default_ticket_name": "ticket-{username}",
+    "default_ticket_name": "ticket-{username}-{short_id}",
+    # Brand and presentation
+    "brand_name": "moealturej",
+    "brand_color": "7C3AED",
+    "brand_footer": "moealturej • Professional server tools",
+    "brand_icon_url": "",
+    # Verification customization and safety
+    "verification_title": "Verify Access",
+    "verification_description": "Confirm your Discord account to unlock the server. The secure link expires after 10 minutes.",
+    "verification_button_label": "Verify with Discord",
+    "verification_success_message": "You are verified and now have access to the server.",
+    "verification_min_account_days": 3,
+    "verification_require_member": False,
+    # Welcome customization
+    "welcome_title": "Welcome to {server}",
+    "welcome_ping_user": False,
+    # Ticket customization
+    "ticket_panel_title": "Support Center",
+    "ticket_panel_description": "Choose the category that best matches your request. You will be asked for a short summary before the private ticket opens.",
+    "ticket_open_message": "Thanks for contacting support. A team member will be with you shortly.",
+    "ticket_label_general": "General support",
+    "ticket_description_general": "Questions, account help, and general assistance.",
+    "ticket_label_hwid": "Key HWID reset",
+    "ticket_description_hwid": "Request a hardware ID reset for a purchased key.",
+    "ticket_label_key_not_received": "Key not received",
+    "ticket_description_key_not_received": "Get help with a missing or delayed key delivery.",
+    # Casino / blackjack economy
+    "casino_enabled": True,
+    "casino_currency": "credits",
+    "casino_starting_balance": 1000,
+    "casino_daily_reward": 250,
+    "blackjack_min_bet": 10,
+    "blackjack_max_bet": 5000,
+    "blackjack_dealer_hits_soft_17": False,
 }
 
 # =========================
@@ -374,6 +415,7 @@ intents.message_content = True  # Needed only to build ticket transcripts.
 bot = commands.Bot(command_prefix="!", intents=intents)
 web_runner: Optional[web.AppRunner] = None
 mongo_client: Optional[AsyncIOMotorClient] = None
+http_session: Optional[ClientSession] = None
 mdb = None
 views_added = False
 commands_synced = False
@@ -405,6 +447,14 @@ async def init_mongo() -> None:
     await mdb.dashboard_events.create_index([("guild_id", 1), ("created_at", -1)])
     await mdb.moderation_events.create_index([("guild_id", 1), ("created_at", -1)])
     await mdb.warnings.create_index([("guild_id", 1), ("user_id", 1), ("created_at", -1)])
+    await mdb.error_events.create_index([("created_at", -1)])
+    await mdb.error_events.create_index([("guild_id", 1), ("created_at", -1)])
+    await mdb.verified_members.create_index([("guild_id", 1), ("user_id", 1)], unique=True)
+    await mdb.casino_wallets.create_index([("guild_id", 1), ("user_id", 1)], unique=True)
+    await mdb.casino_wallets.create_index([("guild_id", 1), ("balance", -1)])
+    await mdb.casino_sessions.create_index([("guild_id", 1), ("user_id", 1)], unique=True)
+    await mdb.casino_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await mdb.casino_events.create_index([("guild_id", 1), ("created_at", -1)])
 
 
 async def get_guild_config(guild_id: int) -> Dict[str, Any]:
@@ -455,6 +505,29 @@ async def save_event(collection: str, payload: Dict[str, Any]) -> None:
     payload.setdefault("created_at", now_iso())
     await mdb[collection].insert_one(payload)
 
+
+async def report_exception(context: str, exc: BaseException, *, guild_id: Optional[int] = None, user_id: Optional[int] = None, details: Optional[Dict[str, Any]] = None) -> str:
+    """Log an internal failure with a user-safe incident ID."""
+    incident_id = secrets.token_hex(4).upper()
+    log.error("Incident %s in %s: %s", incident_id, context, exc, exc_info=(type(exc), exc, exc.__traceback__))
+    payload = {
+        "incident_id": incident_id,
+        "context": context,
+        "error_type": type(exc).__name__,
+        "message": str(exc)[:1000],
+        "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-12000:],
+        "guild_id": int(guild_id) if guild_id else None,
+        "user_id": int(user_id) if user_id else None,
+        "details": details or {},
+        "created_at": utcnow(),
+    }
+    try:
+        if mdb is not None:
+            await mdb.error_events.insert_one(payload)
+    except Exception:
+        log.exception("Could not persist incident %s", incident_id)
+    return incident_id
+
 # =========================
 # AUTH / ACCESS HELPERS
 # =========================
@@ -489,20 +562,22 @@ async def get_dashboard_user(request: web.Request) -> Optional[Dict[str, Any]]:
 
 async def _discord_rest_request(method: str, url: str, *, route: str, **kwargs) -> tuple[int, Any]:
     async def op():
-        async with ClientSession() as session:
-            async with session.request(method, url, **kwargs) as resp:
-                try:
-                    body = await resp.json(content_type=None)
-                except Exception:
-                    body = await resp.text()
-                if resp.status == 429:
-                    retry_after = 0.0
-                    if isinstance(body, dict):
-                        retry_after = float(body.get("retry_after") or 0)
-                    if isinstance(body, dict) and body.get("global"):
-                        rate_limiter.block_global(retry_after + 5)
-                    raise discord.HTTPException(resp, body)
-                return resp.status, body
+        global http_session
+        if http_session is None or http_session.closed:
+            http_session = ClientSession(timeout=ClientTimeout(total=25))
+        async with http_session.request(method, url, **kwargs) as resp:
+            try:
+                body = await resp.json(content_type=None)
+            except Exception:
+                body = await resp.text()
+            if resp.status == 429:
+                retry_after = 0.0
+                if isinstance(body, dict):
+                    retry_after = float(body.get("retry_after") or 0)
+                if isinstance(body, dict) and body.get("global"):
+                    rate_limiter.block_global(retry_after + 5)
+                raise discord.HTTPException(resp, body)
+            return resp.status, body
     result = await discord_guarded(f"REST {method} {route}", f"rest:{route}", op, min_gap=DISCORD_API_MIN_GAP, default=None)
     if result is None:
         raise web.HTTPTooManyRequests(text="Discord is rate limiting requests. Try again shortly.")
@@ -545,7 +620,12 @@ def guild_manageable(user_guild: Dict[str, Any]) -> bool:
 async def dashboard_can_access(user: Dict[str, Any], guild_id: int) -> bool:
     if is_owner_user(int(user["user_id"])):
         return True
-    return False  # Private-use bot. Everyone except owner gets the contact page.
+    if DASHBOARD_OWNER_ONLY:
+        return False
+    for user_guild in user.get("guilds", []):
+        if int(user_guild.get("id", 0)) == int(guild_id) and guild_manageable(user_guild):
+            return True
+    return False
 
 
 def member_is_command_admin(member: discord.Member, config: Dict[str, Any]) -> bool:
@@ -596,10 +676,60 @@ def make_embed(title: str, description: str, color: int = EMBED_COLOR) -> discor
     return discord.Embed(title=title, description=description, color=color, timestamp=utcnow())
 
 
+def parse_color_value(value: Any, fallback: int = EMBED_COLOR) -> int:
+    raw = str(value or "").strip().lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    try:
+        return int(raw, 16) & 0xFFFFFF if raw else fallback
+    except ValueError:
+        return fallback
+
+
+def make_branded_embed(config: Dict[str, Any], title: str, description: str, color: Optional[int] = None) -> discord.Embed:
+    embed = make_embed(title, description, color if color is not None else parse_color_value(config.get("brand_color")))
+    footer = str(config.get("brand_footer") or config.get("brand_name") or "moealturej")[:2048]
+    icon_url = str(config.get("brand_icon_url") or "").strip()
+    embed.set_footer(text=footer, icon_url=icon_url or None)
+    return embed
+
+
+def render_template(template: str, *, guild: discord.Guild, member: Optional[discord.Member] = None, extra: Optional[Dict[str, str]] = None) -> str:
+    values = {
+        "server": guild.name,
+        "server_id": str(guild.id),
+        "member_count": str(guild.member_count or len(guild.members)),
+        "mention": member.mention if member else "",
+        "username": member.display_name if member else "",
+        "user_id": str(member.id) if member else "",
+    }
+    values.update(extra or {})
+    rendered = str(template)
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", value)
+    return rendered
+
+
+def ticket_type_info(config: Dict[str, Any], key: str) -> Dict[str, Any]:
+    base = dict(TICKET_TYPES[key])
+    base["label"] = str(config.get(f"ticket_label_{key}") or base["label"])[:100]
+    base["description"] = str(config.get(f"ticket_description_{key}") or base["description"])[:100]
+    return base
+
+
 def clean_channel_name(text: str) -> str:
     allowed = string.ascii_lowercase + string.digits + "-"
     text = text.lower().replace(" ", "-")
     return "".join(c for c in text if c in allowed)[:80] or "ticket"
+
+
+def clean_ticket_template(text: str) -> str:
+    value = str(text or DEFAULT_GUILD_CONFIG["default_ticket_name"]).lower().replace(" ", "-")
+    allowed = set(string.ascii_lowercase + string.digits + "-_{}")
+    value = "".join(ch for ch in value if ch in allowed)[:90]
+    for placeholder in ("{username}", "{type}", "{short_id}"):
+        value = value.replace(placeholder.replace("_", "-"), placeholder)
+    return value or DEFAULT_GUILD_CONFIG["default_ticket_name"]
 
 
 async def safe_add_role(member: discord.Member, role_id: Optional[int], reason: str) -> bool:
@@ -638,19 +768,14 @@ async def safe_remove_role(member: discord.Member, role_id: Optional[int], reaso
     return bool(await discord_guarded(f"remove role {role.id} from {member.id}", f"role:{member.guild.id}", op, min_gap=DISCORD_ROLE_MIN_GAP, default=False))
 
 
-async def send_verified_dm(member: discord.Member, store_url: str) -> None:
-    embed = make_embed(
-        "Verified successfully",
-        f"You are now verified in **{member.guild.name}**. You can access the server and open a ticket anytime you need help.",
-        SUCCESS_COLOR,
-    )
-    embed.add_field(name="Store", value=store_url, inline=False)
+async def send_verified_dm(member: discord.Member, config: Dict[str, Any]) -> None:
+    success_message = str(config.get("verification_success_message") or DEFAULT_GUILD_CONFIG["verification_success_message"])
+    embed = make_branded_embed(config, "Verified successfully", f"{success_message}\n\n**Server:** {member.guild.name}", SUCCESS_COLOR)
+    store_url = str(config.get("store_url") or DEFAULT_STORE_URL)
+    if store_url:
+        embed.add_field(name="Store", value=store_url, inline=False)
     embed.set_thumbnail(url=member.guild.icon.url if member.guild.icon else member.display_avatar.url)
-    embed.set_footer(text="moealturej verification")
-    try:
-        await safe_user_send(member, embed=embed)
-    except discord.Forbidden:
-        pass
+    await safe_user_send(member, embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
 
 async def log_verification(guild: discord.Guild, user: discord.abc.User, method: str, status: str, details: str = "") -> None:
@@ -665,7 +790,8 @@ async def log_verification(guild: discord.Guild, user: discord.abc.User, method:
     })
     channel = guild.get_channel(config.get("verification_log_channel") or 0)
     if isinstance(channel, discord.TextChannel):
-        embed = make_embed("Verification Log", f"**User:** {user.mention if hasattr(user, 'mention') else user}\n**Method:** {method}\n**Status:** {status}\n{details}", SUCCESS_COLOR if status == "success" else ERROR_COLOR)
+        status_color = SUCCESS_COLOR if status == "success" else (INFO_COLOR if status == "already_verified" else ERROR_COLOR)
+        embed = make_branded_embed(config, "Verification Log", f"**User:** {user.mention if hasattr(user, 'mention') else user}\n**Method:** {method}\n**Status:** {status}\n{details}", status_color)
         await safe_channel_send(channel, embed=embed)
 
 
@@ -698,24 +824,58 @@ async def build_ticket_transcript(channel: discord.TextChannel) -> tuple[str, by
     return filename, "\n".join(lines).encode("utf-8")
 
 # =========================
-# VERIFICATION VIEWS
+# VERIFICATION / TICKET VIEWS
 # =========================
+TICKET_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+
+
+def _ticket_lock(guild_id: int, user_id: int) -> asyncio.Lock:
+    key = (int(guild_id), int(user_id))
+    lock = TICKET_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        TICKET_LOCKS[key] = lock
+    return lock
+
+
+def ticket_topic_value(topic: str, key: str) -> Optional[str]:
+    for part in (topic or "").split():
+        if part.startswith(f"{key}="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def member_can_manage_ticket(member: discord.Member, config: Dict[str, Any], ticket_type: str, owner_id: Optional[int] = None) -> bool:
+    if member.guild_permissions.manage_channels or member_is_command_admin(member, config):
+        return True
+    if owner_id and member.id == owner_id:
+        return True
+    info = TICKET_TYPES.get(ticket_type)
+    role_id = config.get(info["support_role_key"]) if info else None
+    return bool(role_id and any(role.id == int(role_id) for role in member.roles))
+
+
 class OAuthVerifyView(discord.ui.View):
-    def __init__(self, guild_id: int):
+    def __init__(self, guild_id: int, *, label: str = "Verify with Discord"):
         super().__init__(timeout=None)
         self.guild_id = int(guild_id)
+        self.verify_button.label = label[:80] or "Verify with Discord"
 
     @discord.ui.button(label="Verify with Discord", style=discord.ButtonStyle.success, emoji="✅", custom_id="moe_oauth_verify")
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await safe_interaction_send(interaction, "This verification button only works inside the server.", ephemeral=True)
         if rate_limiter.on_cooldown(f"verify_click:{interaction.guild.id}:{interaction.user.id}", VERIFY_CLICK_COOLDOWN_SECONDS):
-            return await safe_interaction_send(interaction, "Please wait a few seconds before clicking verify again.", ephemeral=True)
+            return await safe_interaction_send(interaction, "Please wait a moment before requesting another verification link.", ephemeral=True)
 
         config = await get_guild_config(interaction.guild.id)
         verified_role_id = config.get("verified_role")
         verified_role = interaction.guild.get_role(int(verified_role_id or 0)) if verified_role_id else None
-        if verified_role and verified_role in interaction.user.roles:
+        if not verified_role:
+            return await safe_interaction_send(interaction, "Verification is not fully configured yet. An administrator needs to select a verified role.", ephemeral=True)
+        if not interaction.guild.me.guild_permissions.manage_roles or verified_role >= interaction.guild.me.top_role:
+            return await safe_interaction_send(interaction, "I cannot assign the verified role. Move my bot role above it and give me **Manage Roles**.", ephemeral=True)
+        if verified_role in interaction.user.roles:
             removed = await safe_remove_role(interaction.user, config.get("unverified_role"), "Already verified cleanup")
             extra = " I also removed your unverified role." if removed else ""
             await log_verification(interaction.guild, interaction.user, "panel-check", "already_verified", "User clicked verify but already had verified role." + extra)
@@ -724,20 +884,19 @@ class OAuthVerifyView(discord.ui.View):
         url = f"{PUBLIC_BASE_URL}/verify/start?guild_id={interaction.guild.id}&user_id={interaction.user.id}"
         view = discord.ui.View(timeout=180)
         view.add_item(discord.ui.Button(label="Open secure verification", style=discord.ButtonStyle.link, emoji="🔐", url=url))
-        await safe_interaction_send(interaction, "Click the secure OAuth2 link below to verify your Discord account.", view=view, ephemeral=True)
+        account_days = max(0, int(config.get("verification_min_account_days", 0)))
+        requirement = f" Accounts must be at least **{account_days} day(s)** old." if account_days else ""
+        await safe_interaction_send(interaction, f"Open the private OAuth2 link below. It expires in 10 minutes and only works for your Discord account.{requirement}", view=view, ephemeral=True)
 
 
-class TicketSelect(discord.ui.Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=i["label"], description=i["description"], emoji=i["emoji"], value=k) for k, i in TICKET_TYPES.items()]
-        super().__init__(placeholder="Choose a ticket type...", options=options, custom_id="moe_ticket_select")
+async def create_ticket(interaction: discord.Interaction, ticket_key: str, subject: str, details: str) -> None:
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return await safe_interaction_send(interaction, "Tickets can only be opened inside a server.", ephemeral=True)
+    if rate_limiter.on_cooldown(f"ticket_click:{interaction.guild.id}:{interaction.user.id}", TICKET_CLICK_COOLDOWN_SECONDS):
+        return await safe_interaction_send(interaction, "Please wait before opening another ticket. This prevents duplicate channels.", ephemeral=True)
 
-    async def callback(self, interaction: discord.Interaction):
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await safe_interaction_send(interaction, "This only works inside a server.", ephemeral=True)
-        if rate_limiter.on_cooldown(f"ticket_click:{interaction.guild.id}:{interaction.user.id}", TICKET_CLICK_COOLDOWN_SECONDS):
-            return await safe_interaction_send(interaction, "Please wait before opening another ticket. This prevents Discord rate limits.", ephemeral=True)
-        await safe_interaction_defer(interaction, ephemeral=True)
+    await safe_interaction_defer(interaction, ephemeral=True)
+    async with _ticket_lock(interaction.guild.id, interaction.user.id):
         config = await get_guild_config(interaction.guild.id)
         existing = config.get("open_tickets", {}).get(str(interaction.user.id))
         if existing:
@@ -747,95 +906,156 @@ class TicketSelect(discord.ui.Select):
                 return await safe_interaction_send(interaction, f"You already have an open ticket: {channel.mention}", ephemeral=True)
             await remove_open_ticket(interaction.guild.id, interaction.user.id)
 
-        ticket_key = self.values[0]
-        ticket_info = TICKET_TYPES[ticket_key]
         category = interaction.guild.get_channel(config.get("ticket_category") or 0)
         if not isinstance(category, discord.CategoryChannel):
-            return await safe_interaction_send(interaction, "Ticket category is not configured yet.", ephemeral=True)
+            return await safe_interaction_send(interaction, "The ticket category is not configured yet. Please contact an administrator.", ephemeral=True)
 
-        support_role = interaction.guild.get_role(config.get(ticket_info["support_role_key"]) or 0)
+        ticket_info = ticket_type_info(config, ticket_key)
+        support_role = interaction.guild.get_role(int(config.get(ticket_info["support_role_key"]) or 0))
+        bot_member = interaction.guild.me
+        if not bot_member or not bot_member.guild_permissions.manage_channels:
+            return await safe_interaction_send(interaction, "I need **Manage Channels** before I can create private tickets.", ephemeral=True)
+
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, read_message_history=True),
-            interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, read_message_history=True),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, embed_links=True, read_message_history=True),
+            bot_member: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True, read_message_history=True),
         }
         if support_role:
-            overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, read_message_history=True)
+            overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, embed_links=True, read_message_history=True)
 
+        template = str(config.get("default_ticket_name") or DEFAULT_GUILD_CONFIG["default_ticket_name"])
+        raw_name = render_template(template, guild=interaction.guild, member=interaction.user, extra={"type": ticket_key, "short_id": str(interaction.user.id)[-4:]})
         channel = await safe_create_text_channel(
             interaction.guild,
-            name=clean_channel_name(f"ticket-{interaction.user.name}-{ticket_key}"),
+            name=clean_channel_name(raw_name),
             category=category,
             overwrites=overwrites,
-            topic=f"owner_id={interaction.user.id} ticket_type={ticket_key}",
-            reason=f"Ticket opened by {interaction.user}",
+            topic=f"owner_id={interaction.user.id} ticket_type={ticket_key} claimed_by=0",
+            reason=f"{ticket_info['label']} ticket opened by {interaction.user}",
         )
         if not channel:
-            return await safe_interaction_send(interaction, "Discord is busy right now. Please try opening your ticket again in a minute.", ephemeral=True)
-        await add_open_ticket(interaction.guild.id, interaction.user.id, channel.id, ticket_key)
-        await save_event("ticket_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "channel_id": channel.id, "event": "opened", "ticket_type": ticket_key})
+            return await safe_interaction_send(interaction, "Discord could not create the ticket. Check my channel permissions and try again.", ephemeral=True)
 
-        embed = make_embed(f"{ticket_info['emoji']} {ticket_info['label']}", f"Welcome {interaction.user.mention}. {support_role.mention if support_role else 'Support'} will help you here. Use the button below when finished.")
-        await safe_channel_send(channel, content=f"{interaction.user.mention} {support_role.mention if support_role else ''}", embed=embed, view=CloseTicketView())
-        await safe_interaction_send(interaction, f"Ticket created: {channel.mention}", ephemeral=True)
+        await add_open_ticket(interaction.guild.id, interaction.user.id, channel.id, ticket_key)
+        await save_event("ticket_events", {
+            "guild_id": interaction.guild.id,
+            "user_id": interaction.user.id,
+            "channel_id": channel.id,
+            "event": "opened",
+            "ticket_type": ticket_key,
+            "subject": subject[:100],
+        })
+
+        intro = str(config.get("ticket_open_message") or DEFAULT_GUILD_CONFIG["ticket_open_message"])
+        embed = make_branded_embed(config, f"{ticket_info['emoji']} {ticket_info['label']}", intro)
+        embed.add_field(name="Subject", value=subject[:256] or "No subject provided", inline=False)
+        embed.add_field(name="Details", value=details[:1024] or "No additional details provided", inline=False)
+        embed.add_field(name="Opened by", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=False)
+        mention_text = f"{interaction.user.mention} {support_role.mention if support_role else ''}".strip()
+        allowed = discord.AllowedMentions(users=[interaction.user], roles=[support_role] if support_role else [], everyone=False)
+        await safe_channel_send(channel, content=mention_text, embed=embed, view=CloseTicketView(), allowed_mentions=allowed)
+        await safe_interaction_send(interaction, f"Your private ticket is ready: {channel.mention}", ephemeral=True)
+
+
+class TicketDetailsModal(discord.ui.Modal, title="Open a support ticket"):
+    subject = discord.ui.TextInput(label="Short subject", placeholder="What do you need help with?", max_length=100)
+    details = discord.ui.TextInput(label="Details", placeholder="Include useful context, order IDs, errors, or steps already tried.", style=discord.TextStyle.paragraph, max_length=1000)
+
+    def __init__(self, ticket_key: str):
+        super().__init__(timeout=300)
+        self.ticket_key = ticket_key
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await create_ticket(interaction, self.ticket_key, str(self.subject), str(self.details))
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        incident = await report_exception("ticket_modal", error, guild_id=interaction.guild_id, user_id=interaction.user.id)
+        await safe_interaction_send(interaction, f"The ticket could not be opened. Reference: `{incident}`", ephemeral=True)
+
+
+class TicketSelect(discord.ui.Select):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        config = config or DEFAULT_GUILD_CONFIG
+        options = []
+        for key in TICKET_TYPES:
+            info = ticket_type_info(config, key)
+            options.append(discord.SelectOption(label=info["label"], description=info["description"], emoji=info["emoji"], value=key))
+        super().__init__(placeholder="Choose a support category…", min_values=1, max_values=1, options=options, custom_id="moe_ticket_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return await safe_interaction_send(interaction, "This only works inside a server.", ephemeral=True)
+        await interaction.response.send_modal(TicketDetailsModal(self.values[0]))
 
 
 class TicketPanelView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(timeout=None)
-        self.add_item(TicketSelect())
+        self.add_item(TicketSelect(config))
 
 
 class CloseTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, emoji="🙋", custom_id="moe_claim_ticket")
+    async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel) or not isinstance(interaction.user, discord.Member):
+            return await safe_interaction_send(interaction, "This can only be used in a managed ticket.", ephemeral=True)
+        topic = interaction.channel.topic or ""
+        owner_raw = ticket_topic_value(topic, "owner_id")
+        ticket_type = ticket_topic_value(topic, "ticket_type") or "unknown"
+        owner_id = int(owner_raw) if owner_raw and owner_raw.isdigit() else None
+        config = await get_guild_config(interaction.guild.id)
+        if not member_can_manage_ticket(interaction.user, config, ticket_type) or interaction.user.id == owner_id:
+            return await safe_interaction_send(interaction, "Only support staff can claim this ticket.", ephemeral=True)
+        claimed_raw = ticket_topic_value(topic, "claimed_by")
+        if claimed_raw and claimed_raw != "0":
+            claimed = interaction.guild.get_member(int(claimed_raw)) if claimed_raw.isdigit() else None
+            return await safe_interaction_send(interaction, f"This ticket is already claimed by {claimed.mention if claimed else '`'+claimed_raw+'`'}.", ephemeral=True)
+        parts = [part for part in topic.split() if not part.startswith("claimed_by=")]
+        parts.append(f"claimed_by={interaction.user.id}")
+        await safe_channel_edit(interaction.channel, topic=" ".join(parts), reason=f"Ticket claimed by {interaction.user}")
+        await save_event("ticket_events", {"guild_id": interaction.guild.id, "channel_id": interaction.channel.id, "event": "claimed", "claimed_by": interaction.user.id})
+        await safe_channel_send(interaction.channel, embed=make_branded_embed(config, "Ticket claimed", f"{interaction.user.mention} is now handling this request.", INFO_COLOR))
+        await safe_interaction_send(interaction, "Ticket claimed.", ephemeral=True)
+
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="moe_close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel) or not isinstance(interaction.user, discord.Member):
             return await safe_interaction_send(interaction, "This can only be used inside a ticket channel.", ephemeral=True)
         topic = interaction.channel.topic or ""
-        owner_id = None
-        ticket_type = "unknown"
-        for part in topic.split():
-            if part.startswith("owner_id="):
-                try: owner_id = int(part.split("=", 1)[1])
-                except ValueError: pass
-            if part.startswith("ticket_type="):
-                ticket_type = part.split("=", 1)[1]
-
+        owner_raw = ticket_topic_value(topic, "owner_id")
+        owner_id = int(owner_raw) if owner_raw and owner_raw.isdigit() else None
+        ticket_type = ticket_topic_value(topic, "ticket_type") or "unknown"
         config = await get_guild_config(interaction.guild.id)
-        allowed = interaction.user.guild_permissions.manage_channels or (owner_id == interaction.user.id) or (isinstance(interaction.user, discord.Member) and member_is_command_admin(interaction.user, config))
-        if not allowed:
-            for info in TICKET_TYPES.values():
-                role_id = config.get(info["support_role_key"])
-                if role_id and any(role.id == int(role_id) for role in getattr(interaction.user, "roles", [])):
-                    allowed = True
-        if not allowed:
+        if not member_can_manage_ticket(interaction.user, config, ticket_type, owner_id):
             return await safe_interaction_send(interaction, "You do not have permission to close this ticket.", ephemeral=True)
 
         await safe_interaction_defer(interaction, ephemeral=True)
-        await safe_interaction_send(interaction, "Saving transcript and closing ticket...", ephemeral=True)
-        filename, transcript = await build_ticket_transcript(interaction.channel)
-        import io
+        await safe_interaction_send(interaction, "Saving the transcript and closing this ticket…", ephemeral=True)
+        try:
+            filename, transcript = await build_ticket_transcript(interaction.channel)
+        except Exception as exc:
+            incident = await report_exception("ticket_transcript", exc, guild_id=interaction.guild.id, user_id=interaction.user.id, details={"channel_id": interaction.channel.id})
+            return await safe_interaction_send(interaction, f"I did not close the ticket because its transcript could not be saved. Reference: `{incident}`", ephemeral=True)
 
         owner = interaction.guild.get_member(owner_id or 0)
-        close_embed = make_embed("Ticket Closed", f"Ticket `{interaction.channel.name}` was closed by {interaction.user.mention}.", INFO_COLOR)
+        close_embed = make_branded_embed(config, "Ticket Closed", f"Ticket `{interaction.channel.name}` was closed by {interaction.user.mention}.", INFO_COLOR)
         close_embed.add_field(name="Type", value=ticket_type, inline=True)
+        close_embed.add_field(name="Channel ID", value=str(interaction.channel.id), inline=True)
         if owner:
-            try:
-                await safe_user_send(owner, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
-            except discord.Forbidden:
-                pass
+            await safe_user_send(owner, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
 
-        log_channel = interaction.guild.get_channel(config.get("ticket_log_channel") or 0)
+        log_channel = interaction.guild.get_channel(int(config.get("ticket_log_channel") or 0))
         if isinstance(log_channel, discord.TextChannel):
-            await safe_channel_send(log_channel, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename))
+            await safe_channel_send(log_channel, embed=close_embed, file=discord.File(io.BytesIO(transcript), filename=filename), allowed_mentions=discord.AllowedMentions.none())
 
         await save_event("ticket_events", {"guild_id": interaction.guild.id, "user_id": owner_id, "channel_id": interaction.channel.id, "event": "closed", "ticket_type": ticket_type, "closed_by": interaction.user.id})
         if owner_id:
             await remove_open_ticket(interaction.guild.id, owner_id)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         await safe_channel_delete(interaction.channel, reason=f"Ticket closed by {interaction.user}")
 
 # =========================
@@ -846,6 +1066,8 @@ def page(title: str, body: str) -> web.Response:
     <style>
     :root{color-scheme:dark;--bg:#030306;--bg2:#070711;--glass:rgba(12,12,22,.74);--glass2:rgba(255,255,255,.055);--panel:rgba(14,14,25,.82);--panel2:rgba(124,58,237,.14);--line:rgba(255,255,255,.12);--line2:rgba(192,132,252,.35);--text:#f8f7ff;--muted:rgba(248,247,255,.66);--soft:rgba(248,247,255,.84);--purple:#8b5cf6;--purple2:#c084fc;--pink:#ec4899;--blue:#38bdf8;--green:#22c55e;--danger:#fb7185;--shadow:0 30px 110px rgba(0,0,0,.42)}
     *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:radial-gradient(circle at 18% -10%,rgba(139,92,246,.38),transparent 34rem),radial-gradient(circle at 92% 12%,rgba(236,72,153,.18),transparent 30rem),radial-gradient(circle at 55% 96%,rgba(56,189,248,.12),transparent 32rem),linear-gradient(180deg,#05050a,#020204 68%,#05050a);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent 82%);opacity:.55}body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 0,rgba(255,255,255,.08),transparent 38rem);mix-blend-mode:screen}a{color:#e9d5ff;text-decoration:none}.wrap{width:min(1220px,calc(100% - 30px));margin:auto;padding:28px 0 58px}.nav{position:sticky;top:14px;z-index:10;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding:12px 14px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,rgba(8,8,15,.82),rgba(20,15,34,.68));backdrop-filter:blur(22px);box-shadow:0 22px 90px rgba(0,0,0,.36)}.brand{display:flex;align-items:center;gap:11px;font-weight:950;letter-spacing:-.05em}.brand:before{content:"✦";display:grid;place-items:center;width:38px;height:38px;border-radius:14px;background:linear-gradient(135deg,var(--purple),var(--pink) 55%,var(--blue));box-shadow:0 14px 50px rgba(139,92,246,.46)}.navlinks{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.navlinks a{padding:9px 12px;border-radius:14px;color:rgba(255,255,255,.74);font-weight:800;font-size:14px}.navlinks a:hover{background:rgba(255,255,255,.08);color:#fff}.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:34px;padding:38px;background:linear-gradient(145deg,rgba(139,92,246,.24),rgba(236,72,153,.08) 38%,rgba(56,189,248,.07) 62%,rgba(255,255,255,.04));box-shadow:var(--shadow)}.hero:before{content:"";position:absolute;inset:1px;border-radius:33px;border:1px solid rgba(255,255,255,.06);pointer-events:none}.hero:after{content:"";position:absolute;right:-100px;top:-120px;width:340px;height:340px;background:radial-gradient(circle,rgba(192,132,252,.38),transparent 68%);filter:blur(2px)}h1{font-size:clamp(34px,5.3vw,68px);letter-spacing:-.07em;line-height:.92;margin:0 0 13px;max-width:930px}h2{letter-spacing:-.04em;margin:0 0 12px;font-size:clamp(22px,2.4vw,31px)}h3{letter-spacing:-.03em;margin:0 0 10px;font-size:20px}.card,.guild,.panel{position:relative;border:1px solid var(--line);background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.04));border-radius:26px;padding:23px;box-shadow:0 24px 90px rgba(0,0,0,.29);backdrop-filter:blur(20px);overflow:hidden}.card:before,.guild:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.07),transparent 38%);pointer-events:none;opacity:.55}.guild{transition:transform .18s ease,border-color .18s ease,background .18s ease}.guild:hover{transform:translateY(-4px);border-color:var(--line2);background:linear-gradient(145deg,rgba(124,58,237,.2),rgba(255,255,255,.055))}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}.section-title{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 0 13px}.btn,button{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#a855f7 55%,#ec4899);color:white;padding:12px 17px;font-weight:950;cursor:pointer;box-shadow:0 17px 46px rgba(124,58,237,.29);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.btn:hover,button:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 22px 58px rgba(124,58,237,.34)}.btn.secondary{background:rgba(255,255,255,.075);box-shadow:none;border:1px solid var(--line)}.muted{color:var(--muted);line-height:1.66}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(139,92,246,.14);color:#ede9fe;border:1px solid rgba(192,132,252,.28);font-size:13px;font-weight:900;box-shadow:inset 0 1px rgba(255,255,255,.08)}code{display:inline-block;max-width:100%;overflow:auto;padding:11px 13px;border-radius:15px;border:1px solid var(--line);background:rgba(0,0,0,.34);color:#ddd6fe}label{display:block;color:rgba(255,255,255,.84);font-size:13px;font-weight:900;letter-spacing:.01em}input,select,textarea{width:100%;margin:8px 0 16px;padding:14px 15px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:#10101b;color:#f8fafc;outline:none;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.018);font:inherit}input::placeholder,textarea::placeholder{color:rgba(255,255,255,.36)}input:focus,select:focus,textarea:focus{border-color:rgba(192,132,252,.75);box-shadow:0 0 0 4px rgba(124,58,237,.18)}textarea{min-height:145px;resize:vertical;line-height:1.55}select{appearance:none;background-color:#10101b;background-image:linear-gradient(45deg,transparent 50%,#c4b5fd 50%),linear-gradient(135deg,#c4b5fd 50%,transparent 50%);background-position:calc(100% - 19px) 52%,calc(100% - 12px) 52%;background-size:7px 7px,7px 7px;background-repeat:no-repeat;padding-right:42px}select option{background:#0d0d18;color:#f8fafc}select option:hover,select option:checked{background:#7c3aed;color:#fff}.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.form-section{margin-top:17px;padding-top:17px;border-top:1px solid var(--line)}.savebar{position:sticky;bottom:14px;display:flex;justify-content:flex-end;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(7,7,13,.8);backdrop-filter:blur(20px)}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.preview-shell{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(0,0,0,.28),rgba(255,255,255,.035));padding:16px}.preview-message{white-space:pre-wrap;color:#f8fafc;line-height:1.55;margin-bottom:12px;padding:13px 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.045)}.preview-box{border:1px solid var(--line);border-left:4px solid var(--purple);border-radius:18px;background:rgba(0,0,0,.24);padding:18px;margin-top:8px}.preview-title{font-weight:950;font-size:20px;letter-spacing:-.025em}.preview-desc{white-space:pre-wrap;color:rgba(255,255,255,.78);line-height:1.55;margin-top:8px}.preview-footer{color:rgba(255,255,255,.48);font-size:12px;margin-top:14px}.preview-img{max-width:100%;border-radius:16px;margin-top:14px;border:1px solid var(--line)}.preview-thumb{float:right;width:88px;height:88px;object-fit:cover;border-radius:16px;margin-left:14px;margin-bottom:10px;border:1px solid var(--line)}.tiny{font-size:12px;color:rgba(255,255,255,.48)}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px}.stat{padding:18px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.045)}.stat b{display:block;font-size:27px;letter-spacing:-.04em}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:20px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:13px 15px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}th{color:#ddd6fe;background:rgba(124,58,237,.12)}td{color:var(--soft)}@media(max-width:760px){.row{grid-template-columns:1fr}.nav{position:relative;top:0;align-items:flex-start;gap:12px;flex-direction:column}.hero{padding:25px}.grid{grid-template-columns:1fr}h1{font-size:39px}}
+
+    .compact-hero{padding:30px}.compact-hero h1{font-size:clamp(36px,5vw,58px)}.notice{margin:16px 0;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--soft)}.notice.success{border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.10)}.notice.warning{border-color:rgba(245,158,11,.38);background:rgba(245,158,11,.10)}.dashboard-actions{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 22px}.settings-form{display:grid;gap:13px}.settings-form details{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.035));box-shadow:0 18px 60px rgba(0,0,0,.22);overflow:hidden}.settings-form summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:18px;padding:20px 22px;font-size:18px;font-weight:900}.settings-form summary::-webkit-details-marker{display:none}.settings-form summary span{display:flex;align-items:center;gap:12px}.settings-form summary b{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:rgba(139,92,246,.18);color:#ddd6fe;font-size:12px}.settings-form summary small{color:var(--muted);font-weight:700}.settings-form details[open] summary{border-bottom:1px solid var(--line)}.details-body{padding:22px}.ticket-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.subcard{padding:17px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.035)}.checkline{display:flex;align-items:center;gap:10px;padding:12px 0}.checkline input{width:auto;margin:0}.settings-form .savebar{align-items:center;justify-content:space-between}.settings-form small{display:block;color:var(--muted);font-weight:600;line-height:1.5}@media(max-width:900px){.ticket-grid{grid-template-columns:1fr}.settings-form summary{align-items:flex-start;flex-direction:column}.settings-form .savebar{align-items:stretch;flex-direction:column}}
     </style>
     """
     html_doc = f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{html.escape(title)}</title>{css}</head><body><main class='wrap'><nav class='nav'><div class='brand'>moealturej bot</div><div class='navlinks'><a href='/'>Dashboard</a><a href='/health'>Health</a><a href='/logout'>Logout</a></div></nav>{body}</main></body></html>"
@@ -856,7 +1078,7 @@ async def home(request: web.Request) -> web.Response:
     if not user:
         body = f"<section class='hero'><span class='pill'>🔒 Private control panel</span><h1>Private Discord bot dashboard</h1><p class='muted'>Login with Discord to manage approved servers, verification, tickets, transcripts, logs, and live stats.</p><a class='btn' href='/login'>Login with Discord</a><p class='muted'>{html.escape(OWNER_CONTACT)}</p></section>"
         return page("Dashboard", body)
-    if not is_owner_user(int(user["user_id"])):
+    if DASHBOARD_OWNER_ONLY and not is_owner_user(int(user["user_id"])):
         return page("Not public", f"<section class='card'><h1>Not available publicly</h1><p class='muted'>{html.escape(owner_private_message())}</p></section>")
 
     guilds = user.get("guilds", [])
@@ -866,7 +1088,7 @@ async def home(request: web.Request) -> web.Response:
         if int(g["id"]) in bot_guild_ids and guild_manageable(g):
             icon = "🟢" if int(g["id"]) in bot_guild_ids else "⚪"
             cards.append(f"<div class='guild'><span class='pill'>{icon} Connected</span><h3>{html.escape(g['name'])}</h3><p class='muted'>Server ID: {g['id']}</p><a class='btn' href='/guild/{g['id']}'>Manage server</a></div>")
-    body = f"<section class='hero'><span class='pill'>✅ Owner verified</span><h1>Welcome, {html.escape(user.get('username','owner'))}</h1><p class='muted'>Only Discord account ID <code>{OWNER_USER_ID}</code> can access full dashboard controls.</p></section><div class='section-title'><h2>Your servers</h2><span class='muted'>MongoDB synced</span></div><div class='grid'>{''.join(cards) or '<div class=card>No manageable bot servers found.</div>'}</div>"
+    body = f"<section class='hero compact-hero'><span class='pill'>Authenticated dashboard</span><h1>Welcome, {html.escape(user.get('username','admin'))}</h1><p class='muted'>Manage connected servers you are authorized to configure.</p></section><div class='section-title'><h2>Your servers</h2><span class='muted'>MongoDB synced</span></div><div class='grid'>{''.join(cards) or '<div class=card>No manageable bot servers found.</div>'}</div>"
     return page("Dashboard", body)
 
 
@@ -887,6 +1109,8 @@ async def login(request: web.Request) -> web.Response:
 async def oauth_callback(request: web.Request) -> web.Response:
     state = request.query.get("state", "")
     code = request.query.get("code", "")
+    if request.query.get("error"):
+        return page("Login cancelled", "<section class='card'><h1>Login cancelled</h1><p class='muted'>No dashboard session was created.</p></section>")
     found = await mdb.oauth_states.find_one_and_delete({"state": state, "type": "dashboard", "expires_at": {"$gt": utcnow()}})
     if not found or not code:
         raise web.HTTPBadRequest(text="Invalid or expired OAuth state.")
@@ -894,9 +1118,9 @@ async def oauth_callback(request: web.Request) -> web.Response:
     user = await discord_get("/users/@me", token["access_token"])
     guilds = await discord_get("/users/@me/guilds", token["access_token"])
     session_id = secrets.token_urlsafe(36)
-    await mdb.sessions.insert_one({"session_id": session_id, "user_id": int(user["id"]), "username": user.get("username", "user"), "guilds": guilds, "expires_at": utcnow() + timedelta(days=7)})
+    await mdb.sessions.insert_one({"session_id": session_id, "user_id": int(user["id"]), "username": user.get("username", "user"), "guilds": guilds, "expires_at": utcnow() + timedelta(days=WEB_SESSION_DAYS)})
     resp = web.HTTPFound("/")
-    resp.set_cookie("moe_session", sign_value(session_id), max_age=604800, httponly=True, secure=PUBLIC_BASE_URL.startswith("https://"), samesite="Lax")
+    resp.set_cookie("moe_session", sign_value(session_id), max_age=WEB_SESSION_DAYS * 86400, httponly=True, secure=PUBLIC_BASE_URL.startswith("https://"), samesite="Lax")
     raise resp
 
 
@@ -914,39 +1138,112 @@ async def guild_page(request: web.Request) -> web.Response:
     user = await get_dashboard_user(request)
     guild_id = int(request.match_info["guild_id"])
     if not user or not await dashboard_can_access(user, guild_id):
-        return page("Not public", f"<section class='card'><h1>Not available publicly</h1><p class='muted'>{html.escape(owner_private_message())}</p></section>")
+        return page("Not authorized", f"<section class='card'><h1>Access denied</h1><p class='muted'>{html.escape(owner_private_message())}</p></section>")
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
     config = await get_guild_config(guild_id)
 
-    def options(items, selected):
+    def options(items, selected, *, prefix: str = ""):
         out = ["<option value=''>Not set</option>"]
         for obj in items:
             sel = "selected" if selected and int(selected) == obj.id else ""
-            out.append(f"<option value='{obj.id}' {sel}>{html.escape(obj.name)}</option>")
+            out.append(f"<option value='{obj.id}' {sel}>{prefix}{html.escape(obj.name)}</option>")
         return "".join(out)
 
-    roles = [r for r in guild.roles if not r.is_default()]
+    def selected(value: bool) -> str:
+        return "selected" if value else ""
+
+    def checked(value: bool) -> str:
+        return "checked" if value else ""
+
+    roles = [r for r in guild.roles if not r.is_default() and not r.managed]
     text_channels = guild.text_channels
     categories = guild.categories
+    me = guild.me
+    permissions = me.guild_permissions if me else discord.Permissions.none()
+    verified_role = guild.get_role(int(config.get("verified_role") or 0))
+    problems: list[str] = []
+    if not permissions.manage_roles:
+        problems.append("Bot is missing Manage Roles")
+    if not permissions.manage_channels:
+        problems.append("Bot is missing Manage Channels")
+    if not permissions.send_messages:
+        problems.append("Bot is missing Send Messages")
+    if verified_role and me and verified_role >= me.top_role:
+        problems.append("Verified role is above the bot role")
+    if not config.get("verified_role"):
+        problems.append("Verified role is not selected")
+    if not config.get("ticket_category"):
+        problems.append("Ticket category is not selected")
+
+    open_tickets = len(config.get("open_tickets", {}))
+    verified_count = await mdb.verified_members.count_documents({"guild_id": guild_id})
+    wallet_count = await mdb.casino_wallets.count_documents({"guild_id": guild_id})
+    saved_banner = "<div class='notice success'>✓ Settings saved and cache refreshed.</div>" if request.query.get("saved") else ""
+    diag_class = "success" if not problems else "warning"
+    diag_text = "Everything required is configured." if not problems else " • ".join(problems)
+
     body = f"""
-    <section class='hero'><span class='pill'>⚙️ Server controls</span><h1>{html.escape(guild.name)}</h1><p class='muted'>Manage verification, unverified role cleanup, tickets, transcripts, logs, stats, store links, and admin access from one clean MongoDB-backed panel.</p></section>
-    <div class='section-title'><h2>Core settings</h2><span class='muted'>Saved per server</span></div>
-    <form class='card' method='post'>
-      <div class='row'><label>Bot availability<select name='enabled'><option value='true' {'selected' if config.get('enabled') else ''}>Enabled for this server</option><option value='false' {'selected' if not config.get('enabled') else ''}>Disabled / private only</option></select></label><label>Store URL<input name='store_url' value='{html.escape(config.get('store_url') or DEFAULT_STORE_URL)}' placeholder='https://your-store.com'></label></div>
-      <div class='form-section'><h2>Verification</h2><p class='muted'>If a member already has the verified role, the bot now skips re-verifying and still removes the unverified role if configured.</p><div class='row'><label>Verified role<select name='verified_role'>{options(roles, config.get('verified_role'))}</select></label><label>Unverified role to remove<select name='unverified_role'>{options(roles, config.get('unverified_role'))}</select></label></div><div class='row'><label>Auto role on join<select name='auto_role'>{options(roles, config.get('auto_role'))}</select></label><label>Verification logs<select name='verification_log_channel'>{options(text_channels, config.get('verification_log_channel'))}</select></label></div><label>Verification panel channel<select name='verification_channel'>{options(text_channels, config.get('verification_channel'))}</select></label></div>
-      <div class='form-section'><h2>Dashboard and access</h2><div class='row'><label>Bot admin role<select name='bot_admin_role'>{options(roles, config.get('bot_admin_role'))}</select></label><label>Command logs<select name='command_log_channel'>{options(text_channels, config.get('command_log_channel'))}</select></label></div></div><div class='form-section'><h2>Welcome system</h2><div class='row'><label>Welcome system<select name='welcome_enabled'><option value='true' {'selected' if config.get('welcome_enabled', True) else ''}>Enabled</option><option value='false' {'selected' if not config.get('welcome_enabled', True) else ''}>Disabled</option></select></label><label>Welcome channel<select name='welcome_channel'>{options(text_channels, config.get('welcome_channel'))}</select></label></div><label>Welcome message<textarea name='welcome_message' placeholder='Use &#123;mention&#125;, &#123;server&#125;, and &#123;username&#125;'>{html.escape(config.get('welcome_message') or DEFAULT_GUILD_CONFIG['welcome_message'])}</textarea></label></div><div class='form-section'><h2>Moderation</h2><label>Moderation logs<select name='moderation_log_channel'>{options(text_channels, config.get('moderation_log_channel'))}</select></label></div>
-      <div class='form-section'><h2>Tickets</h2><div class='row'><label>Ticket category<select name='ticket_category'>{options(categories, config.get('ticket_category'))}</select></label><label>Ticket transcript logs<select name='ticket_log_channel'>{options(text_channels, config.get('ticket_log_channel'))}</select></label></div><div class='row'><label>General support role<select name='ticket_role_general'>{options(roles, config.get('ticket_role_general'))}</select></label><label>HWID support role<select name='ticket_role_hwid'>{options(roles, config.get('ticket_role_hwid'))}</select></label></div><label>Key-not-received support role<select name='ticket_role_key_not_received'>{options(roles, config.get('ticket_role_key_not_received'))}</select></label></div>
-      <div class='savebar'><button type='submit'>Save dashboard settings</button></div>
+    <section class='hero compact-hero'>
+      <span class='pill'>Control center</span><h1>{html.escape(guild.name)}</h1>
+      <p class='muted'>Configure branding, verification, tickets, welcome messages, moderation logs, and the blackjack economy without editing code.</p>
+      <div class='stats'><div class='stat'><span class='muted'>Members</span><b>{guild.member_count or len(guild.members)}</b></div><div class='stat'><span class='muted'>Open tickets</span><b>{open_tickets}</b></div><div class='stat'><span class='muted'>Verified</span><b>{verified_count}</b></div><div class='stat'><span class='muted'>Casino players</span><b>{wallet_count}</b></div></div>
+    </section>
+    {saved_banner}
+    <div class='notice {diag_class}'><strong>Setup audit:</strong> {html.escape(diag_text)}</div>
+    <div class='dashboard-actions'><a class='btn secondary' href='/guild/{guild_id}/announcements'>Announcement</a><a class='btn secondary' href='/guild/{guild_id}/embeds'>Embed builder</a><a class='btn secondary' href='/guild/{guild_id}/dms'>DM sender</a><a class='btn secondary' href='/guild/{guild_id}/activity'>Activity & errors</a></div>
+
+    <form class='settings-form' method='post'>
+      <details open><summary><span><b>01</b> Brand & core settings</span><small>Identity, access, and public links</small></summary><div class='details-body'>
+        <div class='row'><label>Bot availability<select name='enabled'><option value='true' {selected(bool(config.get('enabled')))}>Enabled</option><option value='false' {selected(not bool(config.get('enabled')))}>Disabled / owner only</option></select></label><label>Store URL<input name='store_url' value='{html.escape(str(config.get('store_url') or DEFAULT_STORE_URL))}' placeholder='https://your-store.com'></label></div>
+        <div class='row'><label>Brand name<input name='brand_name' maxlength='60' value='{html.escape(str(config.get('brand_name') or 'moealturej'))}'></label><label>Brand color<input name='brand_color' maxlength='7' value='#{html.escape(str(config.get('brand_color') or '7C3AED').lstrip('#'))}' placeholder='#7C3AED'></label></div>
+        <label>Embed footer<input name='brand_footer' maxlength='150' value='{html.escape(str(config.get('brand_footer') or ''))}'></label>
+        <div class='row'><label>Brand icon URL<input name='brand_icon_url' value='{html.escape(str(config.get('brand_icon_url') or ''))}' placeholder='Optional HTTPS image URL'></label><label>Bot admin role<select name='bot_admin_role'>{options(roles, config.get('bot_admin_role'))}</select></label></div>
+      </div></details>
+
+      <details open><summary><span><b>02</b> Verification system</span><small>OAuth security, account rules, and role assignment</small></summary><div class='details-body'>
+        <div class='row'><label>Verified role<select name='verified_role'>{options(roles, config.get('verified_role'))}</select></label><label>Unverified role to remove<select name='unverified_role'>{options(roles, config.get('unverified_role'))}</select></label></div>
+        <div class='row'><label>Auto role on join<select name='auto_role'>{options(roles, config.get('auto_role'))}</select></label><label>Verification logs<select name='verification_log_channel'>{options(text_channels, config.get('verification_log_channel'), prefix='#')}</select></label></div>
+        <div class='row'><label>Minimum Discord account age (days)<input type='number' min='0' max='3650' name='verification_min_account_days' value='{int(config.get('verification_min_account_days', 3))}'></label><label>Verification panel channel<select name='verification_channel'>{options(text_channels, config.get('verification_channel'), prefix='#')}</select></label></div>
+        <div class='row'><label>Existing member required<select name='verification_require_member'><option value='true' {selected(bool(config.get('verification_require_member')))}>Yes — deny users outside server</option><option value='false' {selected(not bool(config.get('verification_require_member')))}>No — allow approved OAuth join</option></select></label><label>OAuth server join<select name='oauth_verify_join_enabled'><option value='true' {selected(bool(config.get('oauth_verify_join_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('oauth_verify_join_enabled', True)))}>Disabled</option></select></label></div>
+        <label>Panel title<input name='verification_title' maxlength='100' value='{html.escape(str(config.get('verification_title') or 'Verify Access'))}'></label>
+        <label>Panel description<textarea name='verification_description' maxlength='1500'>{html.escape(str(config.get('verification_description') or ''))}</textarea></label>
+        <div class='row'><label>Button label<input name='verification_button_label' maxlength='80' value='{html.escape(str(config.get('verification_button_label') or 'Verify with Discord'))}'></label><label>Success message<input name='verification_success_message' maxlength='300' value='{html.escape(str(config.get('verification_success_message') or ''))}'></label></div>
+      </div></details>
+
+      <details><summary><span><b>03</b> Welcome experience</span><small>New-member message and destination</small></summary><div class='details-body'>
+        <div class='row'><label>Welcome system<select name='welcome_enabled'><option value='true' {selected(bool(config.get('welcome_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('welcome_enabled', True)))}>Disabled</option></select></label><label>Welcome channel<select name='welcome_channel'>{options(text_channels, config.get('welcome_channel'), prefix='#')}</select></label></div>
+        <div class='row'><label>Welcome title<input name='welcome_title' maxlength='256' value='{html.escape(str(config.get('welcome_title') or 'Welcome to {server}'))}'></label><label>Ping the new member<select name='welcome_ping_user'><option value='true' {selected(bool(config.get('welcome_ping_user')))}>Yes</option><option value='false' {selected(not bool(config.get('welcome_ping_user')))}>No</option></select></label></div>
+        <label>Welcome message<textarea name='welcome_message' maxlength='1500' placeholder='Use &#123;mention&#125;, &#123;server&#125;, &#123;username&#125;, &#123;member_count&#125;'>{html.escape(str(config.get('welcome_message') or DEFAULT_GUILD_CONFIG['welcome_message']))}</textarea></label>
+      </div></details>
+
+      <details open><summary><span><b>04</b> Support tickets</span><small>Panel copy, routing, staff roles, and naming</small></summary><div class='details-body'>
+        <div class='row'><label>Ticket category<select name='ticket_category'>{options(categories, config.get('ticket_category'))}</select></label><label>Transcript log channel<select name='ticket_log_channel'>{options(text_channels, config.get('ticket_log_channel'), prefix='#')}</select></label></div>
+        <div class='row'><label>Ticket panel channel<select name='ticket_panel_channel'>{options(text_channels, config.get('ticket_panel_channel'), prefix='#')}</select></label><label>Channel name template<input name='default_ticket_name' maxlength='90' value='{html.escape(str(config.get('default_ticket_name') or DEFAULT_GUILD_CONFIG['default_ticket_name']))}'><small>Use &#123;username&#125;, &#123;type&#125;, or &#123;short_id&#125;.</small></label></div>
+        <label>Panel title<input name='ticket_panel_title' maxlength='100' value='{html.escape(str(config.get('ticket_panel_title') or 'Support Center'))}'></label>
+        <label>Panel description<textarea name='ticket_panel_description' maxlength='1500'>{html.escape(str(config.get('ticket_panel_description') or ''))}</textarea></label>
+        <label>Message inside new tickets<textarea name='ticket_open_message' maxlength='1000'>{html.escape(str(config.get('ticket_open_message') or ''))}</textarea></label>
+        <div class='ticket-grid'>
+          <section class='subcard'><h3>General</h3><label>Label<input name='ticket_label_general' value='{html.escape(str(config.get('ticket_label_general') or 'General support'))}'></label><label>Description<input name='ticket_description_general' maxlength='100' value='{html.escape(str(config.get('ticket_description_general') or ''))}'></label><label>Support role<select name='ticket_role_general'>{options(roles, config.get('ticket_role_general'))}</select></label></section>
+          <section class='subcard'><h3>HWID reset</h3><label>Label<input name='ticket_label_hwid' value='{html.escape(str(config.get('ticket_label_hwid') or 'Key HWID reset'))}'></label><label>Description<input name='ticket_description_hwid' maxlength='100' value='{html.escape(str(config.get('ticket_description_hwid') or ''))}'></label><label>Support role<select name='ticket_role_hwid'>{options(roles, config.get('ticket_role_hwid'))}</select></label></section>
+          <section class='subcard'><h3>Missing key</h3><label>Label<input name='ticket_label_key_not_received' value='{html.escape(str(config.get('ticket_label_key_not_received') or 'Key not received'))}'></label><label>Description<input name='ticket_description_key_not_received' maxlength='100' value='{html.escape(str(config.get('ticket_description_key_not_received') or ''))}'></label><label>Support role<select name='ticket_role_key_not_received'>{options(roles, config.get('ticket_role_key_not_received'))}</select></label></section>
+        </div>
+      </div></details>
+
+      <details open><summary><span><b>05</b> Blackjack & economy</span><small>Server-specific virtual credits; no real-money features</small></summary><div class='details-body'>
+        <div class='row'><label>Casino<select name='casino_enabled'><option value='true' {selected(bool(config.get('casino_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('casino_enabled', True)))}>Disabled</option></select></label><label>Currency name<input name='casino_currency' maxlength='24' value='{html.escape(str(config.get('casino_currency') or 'credits'))}'></label></div>
+        <div class='row'><label>Starting balance<input type='number' min='0' max='100000000' name='casino_starting_balance' value='{int(config.get('casino_starting_balance', 1000))}'></label><label>Daily reward<input type='number' min='0' max='100000000' name='casino_daily_reward' value='{int(config.get('casino_daily_reward', 250))}'></label></div>
+        <div class='row'><label>Minimum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_min_bet' value='{int(config.get('blackjack_min_bet', 10))}'></label><label>Maximum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_max_bet' value='{int(config.get('blackjack_max_bet', 5000))}'></label></div>
+        <label class='checkline'><input type='checkbox' name='blackjack_dealer_hits_soft_17' {checked(bool(config.get('blackjack_dealer_hits_soft_17')))}> Dealer hits soft 17</label>
+      </div></details>
+
+      <details><summary><span><b>06</b> Logs & moderation</span><small>Where operational events are recorded</small></summary><div class='details-body'>
+        <div class='row'><label>Moderation logs<select name='moderation_log_channel'>{options(text_channels, config.get('moderation_log_channel'), prefix='#')}</select></label><label>Command logs<select name='command_log_channel'>{options(text_channels, config.get('command_log_channel'), prefix='#')}</select></label></div>
+      </div></details>
+
+      <div class='savebar'><span class='muted'>Changes apply immediately after saving.</span><button type='submit'>Save all settings</button></div>
     </form>
-    <div class='section-title'><h2>Send messages</h2><span class='muted'>Owner dashboard tools</span></div>
-    <div class='grid'>
-      <section class='card'><h2>📣 Announcement sender</h2><p class='muted'>Create a polished announcement embed with live preview and send it to any text channel.</p><a class='btn' href='/guild/{guild_id}/announcements'>Open announcement sender</a></section>
-      <section class='card'><h2>✨ Embed sender</h2><p class='muted'>Build a custom embed with title, message, color, image, footer, and preview before sending.</p><a class='btn' href='/guild/{guild_id}/embeds'>Open embed sender</a></section>
-      <section class='card'><h2>📊 Activity & diagnostics</h2><p class='muted'>Review recent commands, dashboard sends, moderation actions, tickets, warnings, and bot health.</p><a class='btn' href='/guild/{guild_id}/activity'>Open activity</a></section><section class='card'><h2>💌 User DM sender</h2><p class='muted'>Send fully custom private DMs with optional embeds, images, buttons-style links in text, and a live Discord-style preview.</p><a class='btn' href='/guild/{guild_id}/dms'>Open DM sender</a></section>
-    </div>
-    <div class='section-title'><h2>Setup links</h2></div><section class='card'><p class='muted'>OAuth verification URL:</p><code>{PUBLIC_BASE_URL}/verify/start?guild_id={guild_id}</code></section>
     """
     return page(guild.name, body)
 
@@ -957,40 +1254,93 @@ async def guild_save(request: web.Request) -> web.Response:
     if not user or not await dashboard_can_access(user, guild_id):
         raise web.HTTPForbidden(text=owner_private_message())
     data = await request.post()
-    def as_int(name):
+
+    def as_int(name: str, default: Optional[int] = None, low: int = 0, high: int = 100_000_000) -> Optional[int]:
         value = str(data.get(name, "")).strip()
-        return int(value) if value.isdigit() else None
+        if not value and default is None:
+            return None
+        try:
+            return max(low, min(high, int(value if value else default)))
+        except (TypeError, ValueError):
+            return default
+
+    def as_bool(name: str, *, checkbox: bool = False) -> bool:
+        if checkbox:
+            return name in data
+        return str(data.get(name, "false")).lower() == "true"
+
+    def text(name: str, default: str = "", limit: int = 1500) -> str:
+        return str(data.get(name) or default).strip()[:limit]
+
+    store_url = text("store_url", DEFAULT_STORE_URL, 500)
+    if urlparse(store_url).scheme not in {"http", "https"}:
+        store_url = DEFAULT_STORE_URL
+    brand_color = text("brand_color", "7C3AED", 7).lstrip("#").upper()
+    if len(brand_color) not in {3, 6} or any(ch not in string.hexdigits for ch in brand_color):
+        brand_color = "7C3AED"
+    min_bet = as_int("blackjack_min_bet", 10, 1) or 10
+    max_bet = as_int("blackjack_max_bet", 5000, 1) or 5000
+    if max_bet < min_bet:
+        max_bet = min_bet
+
     updates = {
-        "enabled": str(data.get("enabled")) == "true",
-        "store_url": str(data.get("store_url") or DEFAULT_STORE_URL).strip(),
+        "enabled": as_bool("enabled"),
+        "store_url": store_url,
+        "brand_name": text("brand_name", "moealturej", 60),
+        "brand_color": brand_color,
+        "brand_footer": text("brand_footer", "moealturej", 150),
+        "brand_icon_url": text("brand_icon_url", "", 500),
         "verified_role": as_int("verified_role"),
         "unverified_role": as_int("unverified_role"),
         "auto_role": as_int("auto_role"),
         "bot_admin_role": as_int("bot_admin_role"),
-        "welcome_channel": as_int("welcome_channel"),
-        "welcome_enabled": str(data.get("welcome_enabled")) == "true",
-        "welcome_message": str(data.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"]).strip()[:1500],
-        "moderation_log_channel": as_int("moderation_log_channel"),
-        "command_log_channel": as_int("command_log_channel"),
         "verification_channel": as_int("verification_channel"),
         "verification_log_channel": as_int("verification_log_channel"),
+        "verification_min_account_days": as_int("verification_min_account_days", 3, 0, 3650),
+        "verification_require_member": as_bool("verification_require_member"),
+        "oauth_verify_join_enabled": as_bool("oauth_verify_join_enabled"),
+        "verification_title": text("verification_title", "Verify Access", 100),
+        "verification_description": text("verification_description", DEFAULT_GUILD_CONFIG["verification_description"], 1500),
+        "verification_button_label": text("verification_button_label", "Verify with Discord", 80),
+        "verification_success_message": text("verification_success_message", DEFAULT_GUILD_CONFIG["verification_success_message"], 300),
+        "welcome_channel": as_int("welcome_channel"),
+        "welcome_enabled": as_bool("welcome_enabled"),
+        "welcome_title": text("welcome_title", "Welcome to {server}", 256),
+        "welcome_message": text("welcome_message", DEFAULT_GUILD_CONFIG["welcome_message"], 1500),
+        "welcome_ping_user": as_bool("welcome_ping_user"),
+        "moderation_log_channel": as_int("moderation_log_channel"),
+        "command_log_channel": as_int("command_log_channel"),
         "ticket_category": as_int("ticket_category"),
+        "ticket_panel_channel": as_int("ticket_panel_channel"),
         "ticket_log_channel": as_int("ticket_log_channel"),
         "ticket_role_general": as_int("ticket_role_general"),
         "ticket_role_hwid": as_int("ticket_role_hwid"),
         "ticket_role_key_not_received": as_int("ticket_role_key_not_received"),
+        "default_ticket_name": clean_ticket_template(text("default_ticket_name", DEFAULT_GUILD_CONFIG["default_ticket_name"], 90)),
+        "ticket_panel_title": text("ticket_panel_title", "Support Center", 100),
+        "ticket_panel_description": text("ticket_panel_description", DEFAULT_GUILD_CONFIG["ticket_panel_description"], 1500),
+        "ticket_open_message": text("ticket_open_message", DEFAULT_GUILD_CONFIG["ticket_open_message"], 1000),
+        "ticket_label_general": text("ticket_label_general", "General support", 100),
+        "ticket_description_general": text("ticket_description_general", DEFAULT_GUILD_CONFIG["ticket_description_general"], 100),
+        "ticket_label_hwid": text("ticket_label_hwid", "Key HWID reset", 100),
+        "ticket_description_hwid": text("ticket_description_hwid", DEFAULT_GUILD_CONFIG["ticket_description_hwid"], 100),
+        "ticket_label_key_not_received": text("ticket_label_key_not_received", "Key not received", 100),
+        "ticket_description_key_not_received": text("ticket_description_key_not_received", DEFAULT_GUILD_CONFIG["ticket_description_key_not_received"], 100),
+        "casino_enabled": as_bool("casino_enabled"),
+        "casino_currency": text("casino_currency", "credits", 24),
+        "casino_starting_balance": as_int("casino_starting_balance", 1000, 0),
+        "casino_daily_reward": as_int("casino_daily_reward", 250, 0),
+        "blackjack_min_bet": min_bet,
+        "blackjack_max_bet": max_bet,
+        "blackjack_dealer_hits_soft_17": as_bool("blackjack_dealer_hits_soft_17", checkbox=True),
     }
     await set_config(guild_id, updates)
-    raise web.HTTPFound(f"/guild/{guild_id}")
+    await save_event("dashboard_events", {"guild_id": guild_id, "user_id": int(user["user_id"]), "event": "settings_updated", "fields": sorted(updates)})
+    raise web.HTTPFound(f"/guild/{guild_id}?saved=1")
+
 
 def parse_embed_color(value: str) -> int:
-    value = (value or "").strip().replace("#", "")
-    if not value:
-        return EMBED_COLOR
-    try:
-        return int(value, 16) & 0xFFFFFF
-    except ValueError:
-        return EMBED_COLOR
+    return parse_color_value(value)
 
 
 def channel_options(guild: discord.Guild, selected: Optional[int] = None) -> str:
@@ -1272,7 +1622,7 @@ async def activity_page(request: web.Request) -> web.Response:
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
     events = []
-    for collection in ("dashboard_events", "moderation_events", "ticket_events", "verification_events"):
+    for collection in ("error_events", "dashboard_events", "moderation_events", "ticket_events", "verification_events"):
         async for item in mdb[collection].find({"guild_id": guild_id}, {"_id": 0}).sort("created_at", -1).limit(30):
             item["source"] = collection.replace("_events", "")
             events.append(item)
@@ -1280,7 +1630,7 @@ async def activity_page(request: web.Request) -> web.Response:
     rows = []
     for item in events[:75]:
         actor = item.get("user_id") or item.get("moderator_id") or item.get("closed_by") or "—"
-        detail = item.get("reason") or item.get("title") or item.get("ticket_type") or item.get("status") or "—"
+        detail = item.get("incident_id") or item.get("reason") or item.get("message") or item.get("title") or item.get("ticket_type") or item.get("status") or "—"
         rows.append(f"<tr><td>{html.escape(str(item.get('created_at',''))[:19].replace('T',' '))}</td><td>{html.escape(str(item.get('source','')))}</td><td>{html.escape(str(item.get('event','activity')))}</td><td>{html.escape(str(actor))}</td><td>{html.escape(str(detail))[:180]}</td></tr>")
     warning_count = await mdb.warnings.count_documents({"guild_id": guild_id})
     open_tickets = len((await get_guild_config(guild_id)).get("open_tickets", {}))
@@ -1289,32 +1639,45 @@ async def activity_page(request: web.Request) -> web.Response:
 
 
 async def verify_start(request: web.Request) -> web.Response:
-    guild_id = int(request.query.get("guild_id", "0"))
-    requested_user_id = int(request.query.get("user_id", "0") or 0)
+    try:
+        guild_id = int(request.query.get("guild_id", "0"))
+        requested_user_id = int(request.query.get("user_id", "0"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="Invalid verification link.")
     guild = bot.get_guild(guild_id)
     if not guild:
-        return page("Verification", "<section class='card'><h1>Server not found</h1><p class='muted'>The bot is not in this server.</p></section>")
+        return page("Verification", "<section class='card'><h1>Server unavailable</h1><p class='muted'>The bot is not connected to this server.</p></section>")
     if not requested_user_id:
-        return page("Verification", f"<section class='hero'><span class='pill'>🔐 Secure verification</span><h1>Use the server verify button</h1><p class='muted'>For safety, verification links are generated privately after the bot checks your roles inside {html.escape(guild.name)}. Go back to Discord and click the verify button again.</p></section>")
+        return page("Verification", f"<section class='hero compact-hero'><span class='pill'>Secure verification</span><h1>Start inside Discord</h1><p class='muted'>Return to <b>{html.escape(guild.name)}</b> and click its verification button. Direct or copied links are intentionally blocked.</p></section>")
 
-    # Extra web-side guard. The main no-link check happens in the Discord button interaction,
-    # but this prevents old/copied links from making already-verified members authorize again.
-    if requested_user_id:
-        config = await get_guild_config(guild_id)
-        member = guild.get_member(requested_user_id)
+    config = await get_guild_config(guild_id)
+    member = guild.get_member(requested_user_id) or await safe_fetch_member(guild, requested_user_id)
+    if member:
         verified_role = guild.get_role(int(config.get("verified_role") or 0)) if config.get("verified_role") else None
-        if member and verified_role and verified_role in member.roles:
+        if verified_role and verified_role in member.roles:
             removed = await safe_remove_role(member, config.get("unverified_role"), "Already verified cleanup from web guard")
-            await log_verification(guild, member, "web-precheck", "already_verified", "OAuth start blocked because member already had verified role." + (" Unverified role removed." if removed else ""))
-            return page("Already verified", f"<section class='hero'><span class='pill'>✅ Already verified</span><h1>No action needed</h1><p class='muted'>You are already verified in {html.escape(guild.name)}. You can close this page.</p></section>")
+            await log_verification(guild, member, "web-precheck", "already_verified", "OAuth start blocked because member already had the verified role." + (" Unverified role removed." if removed else ""))
+            return page("Already verified", f"<section class='hero compact-hero'><span class='pill'>Already verified</span><h1>No action needed</h1><p class='muted'>You already have access to {html.escape(guild.name)}.</p></section>")
+    elif config.get("verification_require_member") or not config.get("oauth_verify_join_enabled", True):
+        return page("Membership required", f"<section class='card'><h1>Join the server first</h1><p class='muted'>This server only verifies current members. Join {html.escape(guild.name)}, then press Verify again.</p></section>")
 
     state = secrets.token_urlsafe(32)
-    await mdb.oauth_states.insert_one({"state": state, "type": "verify", "guild_id": guild_id, "requested_user_id": requested_user_id, "expires_at": utcnow() + timedelta(minutes=10)})
+    await mdb.oauth_states.insert_one({
+        "state": state,
+        "type": "verify",
+        "guild_id": guild_id,
+        "requested_user_id": requested_user_id,
+        "created_at": utcnow(),
+        "expires_at": utcnow() + timedelta(minutes=10),
+    })
+    scopes = ["identify"]
+    if config.get("oauth_verify_join_enabled", True):
+        scopes.append("guilds.join")
     params = {
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": f"{PUBLIC_BASE_URL}/verify/callback",
         "response_type": "code",
-        "scope": "identify guilds.join",
+        "scope": " ".join(scopes),
         "state": state,
     }
     raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{urlencode(params)}")
@@ -1323,43 +1686,115 @@ async def verify_start(request: web.Request) -> web.Response:
 async def verify_callback(request: web.Request) -> web.Response:
     state = request.query.get("state", "")
     code = request.query.get("code", "")
+    oauth_error = request.query.get("error", "")
     found = await mdb.oauth_states.find_one_and_delete({"state": state, "type": "verify", "expires_at": {"$gt": utcnow()}})
-    if not found or not code:
-        raise web.HTTPBadRequest(text="Invalid or expired verification state.")
+    if not found:
+        raise web.HTTPBadRequest(text="This verification link is invalid, expired, or already used.")
+    if oauth_error or not code:
+        return page("Verification cancelled", "<section class='card'><h1>Verification cancelled</h1><p class='muted'>No roles were changed. Return to Discord when you are ready to try again.</p></section>")
+
     guild_id = int(found["guild_id"])
+    requested_user_id = int(found["requested_user_id"])
     guild = bot.get_guild(guild_id)
     if not guild:
-        return page("Verification", "<section class='card'><h1>Server not found</h1></section>")
+        return page("Verification", "<section class='card'><h1>Server unavailable</h1></section>")
+    config = await get_guild_config(guild_id)
+
     token = await exchange_code(code, f"{PUBLIC_BASE_URL}/verify/callback")
     user = await discord_get("/users/@me", token["access_token"])
     user_id = int(user["id"])
-    config = await get_guild_config(guild_id)
+    discord_user = await safe_fetch_user(user_id)
 
-    # guilds.join lets the app add the user to the server when the bot is in that server.
-    await discord_put(f"/guilds/{guild_id}/members/{user_id}", BOT_TOKEN, {"access_token": token["access_token"]})
-    await asyncio.sleep(1)
+    # Critical anti-link-sharing check: the OAuth account must be the member
+    # who clicked the private verification button.
+    if user_id != requested_user_id:
+        if discord_user:
+            await log_verification(guild, discord_user, "oauth2", "identity_mismatch", f"Expected user {requested_user_id}, received {user_id}. No roles changed.")
+        return page("Wrong Discord account", f"<section class='card'><h1>Account mismatch</h1><p class='muted'>This link belongs to a different Discord account. Sign into the account that clicked Verify and request a fresh link.</p><code>Expected: {requested_user_id}</code></section>")
+
+    minimum_days = max(0, int(config.get("verification_min_account_days", 0)))
+    account_created = discord.utils.snowflake_time(user_id)
+    account_age = utcnow() - account_created
+    if account_age < timedelta(days=minimum_days):
+        if discord_user:
+            await log_verification(guild, discord_user, "oauth2", "account_too_new", f"Account age {account_age.days}d; minimum {minimum_days}d.")
+        return page("Account too new", f"<section class='card'><h1>Account age requirement</h1><p class='muted'>This server requires Discord accounts to be at least <b>{minimum_days} day(s)</b> old. Your account is approximately <b>{account_age.days} day(s)</b> old.</p></section>")
+
     member = guild.get_member(user_id) or await safe_fetch_member(guild, user_id)
+    if member is None and config.get("verification_require_member"):
+        return page("Membership required", f"<section class='card'><h1>Join the server first</h1><p class='muted'>Join {html.escape(guild.name)}, then request a new verification link.</p></section>")
+
+    if member is None and config.get("oauth_verify_join_enabled", True):
+        status, _ = await discord_put(f"/guilds/{guild_id}/members/{user_id}", BOT_TOKEN, {"access_token": token["access_token"]})
+        if status not in {201, 204}:
+            return page("Join failed", "<section class='card'><h1>Could not join the server</h1><p class='muted'>Discord did not accept the server join. Join manually and try again.</p></section>")
+        for attempt in range(4):
+            await asyncio.sleep(0.75 + attempt * 0.35)
+            member = guild.get_member(user_id) or await safe_fetch_member(guild, user_id)
+            if member:
+                break
     if member is None:
-        return page("Verification delayed", "<section class='hero'><span class='pill'>⏳ Try again</span><h1>Discord is busy</h1><p class='muted'>The bot could not fetch your member record because Discord is rate limiting requests. Please click verify again in a minute.</p></section>")
+        return page("Verification delayed", "<section class='card'><h1>Discord is still processing</h1><p class='muted'>Return to Discord and request a new verification link in a minute.</p></section>")
 
     verified_role_id = config.get("verified_role")
     verified_role = guild.get_role(int(verified_role_id or 0)) if verified_role_id else None
-    already_verified = bool(verified_role and verified_role in member.roles)
+    if not verified_role:
+        await log_verification(guild, member, "oauth2", "configuration_error", "Verified role is missing.")
+        return page("Setup incomplete", "<section class='card'><h1>Verification is not configured</h1><p class='muted'>An administrator must select a verified role.</p></section>")
+    if not guild.me.guild_permissions.manage_roles or verified_role >= guild.me.top_role:
+        await log_verification(guild, member, "oauth2", "role_hierarchy_error", "Bot cannot manage verified role.")
+        return page("Role error", "<section class='card'><h1>Role hierarchy needs attention</h1><p class='muted'>The bot role must be above the verified role and have Manage Roles.</p></section>")
 
-    if already_verified:
-        role_ok = True
-        details = "OAuth authorized. User already had the verified role."
-    else:
-        role_ok = await safe_add_role(member, verified_role_id, "User completed OAuth2 verification")
-        details = "OAuth authorized. Verified role assigned." if role_ok else "OAuth authorized, but verified role was not assigned. Check role position/config."
-
-    removed_unverified = await safe_remove_role(member, config.get("unverified_role"), "User completed OAuth2 verification")
+    already_verified = verified_role in member.roles
+    role_ok = already_verified or await safe_add_role(member, verified_role_id, "User completed secure OAuth2 verification")
+    removed_unverified = await safe_remove_role(member, config.get("unverified_role"), "User completed secure OAuth2 verification")
+    details = "OAuth identity matched the requesting member. "
+    details += "User already had the verified role." if already_verified else ("Verified role assigned." if role_ok else "Verified role assignment failed.")
     if removed_unverified:
         details += " Unverified role removed."
 
-    await send_verified_dm(member, config.get("store_url", DEFAULT_STORE_URL))
+    if role_ok:
+        await mdb.verified_members.update_one(
+            {"guild_id": guild_id, "user_id": user_id},
+            {"$set": {"username": str(member), "verified_at": utcnow(), "method": "oauth2", "account_created_at": account_created}},
+            upsert=True,
+        )
+        await send_verified_dm(member, config)
     await log_verification(guild, member, "oauth2", "success" if role_ok else "failed", details)
-    return page("Verified", f"<section class='hero'><span class='pill'>✅ Verified</span><h1>{'Already verified' if already_verified else 'Verified'}</h1><p class='muted'>You are verified in {html.escape(guild.name)}. You can close this page.</p></section>")
+    success_message = html.escape(str(config.get("verification_success_message") or DEFAULT_GUILD_CONFIG["verification_success_message"]))
+    return page("Verified", f"<section class='hero compact-hero'><span class='pill'>Verification complete</span><h1>{'Already verified' if already_verified else 'Access unlocked'}</h1><p class='muted'>{success_message}</p><p class='muted'>You may close this tab and return to {html.escape(guild.name)}.</p></section>")
+
+
+@web.middleware
+async def security_error_middleware(request: web.Request, handler):
+    request_id = secrets.token_hex(4).upper()
+    try:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("Origin")
+            if origin and urlparse(origin).netloc != urlparse(PUBLIC_BASE_URL).netloc:
+                raise web.HTTPForbidden(text="Cross-site request blocked.")
+        response = await handler(request)
+    except web.HTTPException as exc:
+        response = exc
+    except Exception as exc:
+        incident = await report_exception(
+            "web_request",
+            exc,
+            user_id=None,
+            details={"request_id": request_id, "method": request.method, "path": request.path},
+        )
+        response = page(
+            "Something went wrong",
+            f"<section class='card'><span class='pill'>Request failed</span><h1>That action could not be completed</h1><p class='muted'>The error was logged safely. Try again, then use this reference if it continues.</p><code>{incident}</code></section>",
+        )
+        response.set_status(500)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 async def health(request: web.Request) -> web.Response:
@@ -1367,9 +1802,21 @@ async def health(request: web.Request) -> web.Response:
     startup_wait = 0
     if startup_blocked_until:
         startup_wait = max(0, int((startup_blocked_until - utcnow()).total_seconds()))
+    mongo_ok = False
+    try:
+        if mdb is not None:
+            await asyncio.wait_for(mdb.command("ping"), timeout=2.0)
+            mongo_ok = True
+    except Exception:
+        mongo_ok = False
+    bot_ready = bot.is_ready()
+    status = "ready" if bot_ready and mongo_ok else "degraded"
     return web.json_response({
-        "status": "ok",
+        "status": status,
+        "version": BUILD_VERSION,
         "bot": str(bot.user) if bot.user else ("waiting_for_discord" if startup_wait else "starting"),
+        "discord_ready": bot_ready,
+        "database_ready": mongo_ok,
         "guilds": len(bot.guilds),
         "latency_ms": round(bot.latency * 1000) if bot.latency else None,
         "uptime_seconds": int(uptime.total_seconds()),
@@ -1383,7 +1830,7 @@ async def start_web() -> None:
     global web_runner
     if web_runner:
         return
-    app = web.Application(client_max_size=8 * 1024 ** 2)
+    app = web.Application(client_max_size=8 * 1024 ** 2, middlewares=[security_error_middleware])
     app.router.add_get("/", home)
     app.router.add_get("/login", login)
     app.router.add_get("/oauth/callback", oauth_callback)
@@ -1400,10 +1847,10 @@ async def start_web() -> None:
     app.router.add_get("/verify/start", verify_start)
     app.router.add_get("/verify/callback", verify_callback)
     app.router.add_get("/health", health)
-    web_runner = web.AppRunner(app)
+    web_runner = web.AppRunner(app, access_log=log)
     await web_runner.setup()
     await web.TCPSite(web_runner, WEB_HOST, WEB_PORT).start()
-    print(f"Dashboard running on http://{WEB_HOST}:{WEB_PORT}")
+    log.info("Dashboard running on http://%s:%s", WEB_HOST, WEB_PORT)
 
 # =========================
 # EVENTS / TASKS
@@ -1451,19 +1898,24 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    config = await get_guild_config(member.guild.id)
-    verified_role = member.guild.get_role(int(config.get("verified_role") or 0)) if config.get("verified_role") else None
-    if config.get("unverified_role") and not (verified_role and verified_role in member.roles):
-        await safe_add_role(member, config.get("unverified_role"), "Unverified role on join")
-    if config.get("auto_role"):
-        await safe_add_role(member, config.get("auto_role"), "Auto role on join")
-    channel = member.guild.get_channel(config.get("welcome_channel") or 0)
-    if config.get("welcome_enabled", True) and isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
-        template = str(config.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"])
-        message = template.replace("{mention}", member.mention).replace("{server}", member.guild.name).replace("{username}", member.display_name)[:4000]
-        embed = make_embed("Welcome", message)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await safe_channel_send(channel, embed=embed)
+    try:
+        config = await get_guild_config(member.guild.id)
+        verified_role = member.guild.get_role(int(config.get("verified_role") or 0)) if config.get("verified_role") else None
+        if config.get("unverified_role") and not (verified_role and verified_role in member.roles):
+            await safe_add_role(member, config.get("unverified_role"), "Unverified role on join")
+        if config.get("auto_role"):
+            await safe_add_role(member, config.get("auto_role"), "Auto role on join")
+        channel = member.guild.get_channel(int(config.get("welcome_channel") or 0))
+        if config.get("welcome_enabled", True) and isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
+            title = render_template(str(config.get("welcome_title") or DEFAULT_GUILD_CONFIG["welcome_title"]), guild=member.guild, member=member)[:256]
+            message = render_template(str(config.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"]), guild=member.guild, member=member)[:4000]
+            embed = make_branded_embed(config, title, message)
+            embed.set_thumbnail(url=member.display_avatar.url)
+            content = member.mention if config.get("welcome_ping_user") else None
+            allowed = discord.AllowedMentions(users=[member] if content else [], roles=False, everyone=False)
+            await safe_channel_send(channel, content=content, embed=embed, allowed_mentions=allowed)
+    except Exception as exc:
+        await report_exception("member_join", exc, guild_id=member.guild.id, user_id=member.id)
 
 
 @tasks.loop(minutes=5)
@@ -1500,11 +1952,13 @@ async def self_ping():
     if not url:
         return
     try:
-        async with ClientSession() as session:
-            async with session.get(url, timeout=15) as response:
-                await response.text()
+        global http_session
+        if http_session is None or http_session.closed:
+            http_session = ClientSession(timeout=ClientTimeout(total=20))
+        async with http_session.get(url) as response:
+            await response.text()
     except (ClientError, asyncio.TimeoutError) as e:
-        print(f"Self-ping failed for {url}: {e}")
+        log.warning("Self-ping failed for %s: %s", url, e)
 
 # =========================
 # COMMANDS
@@ -1512,30 +1966,37 @@ async def self_ping():
 @bot.tree.command(name="ping", description="Check bot latency.")
 @guild_enabled_or_owner()
 async def ping(interaction: discord.Interaction):
-    await safe_interaction_send(interaction, embed=make_embed("Pong", f"Latency: `{round(bot.latency * 1000)}ms`"), ephemeral=True)
+    config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
+    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Pong", f"Discord latency: `{round(bot.latency * 1000)}ms`", SUCCESS_COLOR), ephemeral=True)
 
 
 @bot.tree.command(name="store", description="Get the store link.")
 @guild_enabled_or_owner()
 async def store(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id) if interaction.guild else {"store_url": DEFAULT_STORE_URL}
-    await safe_interaction_send(interaction, embed=make_embed("Store", f"Visit the store here:\n{config.get('store_url', DEFAULT_STORE_URL)}"), ephemeral=True)
+    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Store", f"Visit the store here:\n{config.get('store_url', DEFAULT_STORE_URL)}"), ephemeral=True)
 
 
-@bot.tree.command(name="help", description="Show public commands.")
+@bot.tree.command(name="help", description="Show available commands.")
 async def help_command(interaction: discord.Interaction):
-    embed = make_embed("Help", "Public commands available here.")
-    embed.add_field(name="Commands", value="`/ping` - Check latency\n`/store` - Store link\n`/help` - This menu", inline=False)
+    config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
+    embed = make_branded_embed(config, "Command Center", "Useful commands are grouped below so members can find what they need quickly.")
+    embed.add_field(name="Essentials", value="`/ping` latency • `/store` store link • `/serverinfo` server details • `/userinfo` member details • `/avatar` avatar", inline=False)
+    if config.get("casino_enabled", True):
+        embed.add_field(name="Blackjack", value="`/blackjack` play • `/balance` wallet • `/daily` daily credits • `/casino_leaderboard` rankings", inline=False)
+    embed.add_field(name="Support", value="Use the server's Support Center panel to open a private ticket.", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="commands", description="Show private owner/admin commands.")
 @admin_only()
 async def commands_menu(interaction: discord.Interaction):
-    embed = make_embed("Admin Commands", "Private setup commands for this bot.")
-    embed.add_field(name="Setup", value="`/setup_enable` `/set_admin_role` `/set_verified_role` `/set_unverified_role` `/set_auto_role` `/set_logs` `/set_ticket_category` `/set_ticket_role` `/stats_setup`", inline=False)
+    config = await get_guild_config(interaction.guild.id)
+    embed = make_branded_embed(config, "Admin Commands", "Private setup and operations commands.")
+    embed.add_field(name="Setup", value="`/setup_audit` `/setup_enable` `/set_admin_role` `/set_verified_role` `/set_unverified_role` `/set_auto_role` `/set_logs` `/set_ticket_category` `/set_ticket_role` `/stats_setup`", inline=False)
     embed.add_field(name="Panels", value="`/send_verification_panel` `/send_ticket_panel`", inline=False)
     embed.add_field(name="Content", value="`/set_store` `/announce` `/config_show`", inline=False)
+    embed.add_field(name="Moderation", value="`/purge` `/timeout` `/untimeout` `/warn` `/warnings` `/slowmode` `/lock` `/unlock`", inline=False)
     embed.add_field(name="Dashboard", value=f"{PUBLIC_BASE_URL}/", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
@@ -1592,9 +2053,10 @@ async def set_logs(interaction: discord.Interaction, verification_logs: Optional
 async def send_verification_panel(interaction: discord.Interaction, channel: discord.TextChannel):
     await safe_interaction_defer(interaction, ephemeral=True)
     await set_config(interaction.guild.id, {"verification_channel": channel.id})
-    embed = make_embed("Verify Access", "Click below to verify with Discord OAuth2. This securely confirms your Discord account and can add you to the server if needed.")
-    embed.set_footer(text="moealturej OAuth2 verification")
-    await safe_channel_send(channel, embed=embed, view=OAuthVerifyView(interaction.guild.id))
+    config = await get_guild_config(interaction.guild.id)
+    embed = make_branded_embed(config, str(config.get("verification_title") or "Verify Access"), str(config.get("verification_description") or DEFAULT_GUILD_CONFIG["verification_description"]))
+    embed.add_field(name="Secure by design", value="The private link expires in 10 minutes and only works for the account that clicked the button.", inline=False)
+    await safe_channel_send(channel, embed=embed, view=OAuthVerifyView(interaction.guild.id, label=str(config.get("verification_button_label") or "Verify with Discord")))
     await safe_interaction_send(interaction, f"OAuth2 verification panel sent in {channel.mention}.", ephemeral=True)
 
 
@@ -1618,9 +2080,11 @@ async def set_ticket_role(interaction: discord.Interaction, ticket_type: app_com
 async def send_ticket_panel(interaction: discord.Interaction, channel: discord.TextChannel):
     await safe_interaction_defer(interaction, ephemeral=True)
     await set_config(interaction.guild.id, {"ticket_panel_channel": channel.id})
-    embed = make_embed("Support Tickets", "Choose the ticket type that matches your issue. A private support channel will be created.")
-    embed.add_field(name="Options", value="💬 General support\n🔑 Key HWID reset\n📦 Key not received", inline=False)
-    await safe_channel_send(channel, embed=embed, view=TicketPanelView())
+    config = await get_guild_config(interaction.guild.id)
+    embed = make_branded_embed(config, str(config.get("ticket_panel_title") or "Support Center"), str(config.get("ticket_panel_description") or DEFAULT_GUILD_CONFIG["ticket_panel_description"]))
+    options_text = "\n".join(f"{ticket_type_info(config, key)['emoji']} **{ticket_type_info(config, key)['label']}** — {ticket_type_info(config, key)['description']}" for key in TICKET_TYPES)
+    embed.add_field(name="Available categories", value=options_text[:1024], inline=False)
+    await safe_channel_send(channel, embed=embed, view=TicketPanelView(config))
     await safe_interaction_send(interaction, f"Ticket panel sent in {channel.mention}.", ephemeral=True)
 
 
@@ -1635,7 +2099,7 @@ async def set_store(interaction: discord.Interaction, url: str):
 @admin_only()
 async def announce(interaction: discord.Interaction, channel: discord.TextChannel, title: str, message: str, image_url: Optional[str] = None):
     config = await get_guild_config(interaction.guild.id)
-    embed = make_embed(title, message)
+    embed = make_branded_embed(config, title, message)
     if image_url or config.get("announce_image"):
         embed.set_image(url=image_url or config.get("announce_image"))
     embed.set_footer(text=config.get("announce_footer") or "moealturej")
@@ -1671,10 +2135,174 @@ async def stats_setup(interaction: discord.Interaction, category: Optional[disco
 @admin_only()
 async def config_show(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id)
-    embed = make_embed("Server Config", "Current MongoDB settings.")
+    embed = make_branded_embed(config, "Server Config", "Current MongoDB settings.")
     for key in ["enabled", "verified_role", "unverified_role", "auto_role", "bot_admin_role", "verification_log_channel", "ticket_log_channel", "ticket_category", "store_url"]:
         embed.add_field(name=key, value=str(config.get(key)), inline=True)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+# =========================
+# BLACKJACK / VIRTUAL ECONOMY
+# =========================
+@bot.tree.command(name="blackjack", description="Play an interactive game of blackjack with virtual server credits.")
+@app_commands.describe(bet="Credits to wager", private="Only show the table to you")
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000], private: bool = False):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Blackjack is only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True):
+        return await safe_interaction_send(interaction, "The blackjack economy is disabled in this server.", ephemeral=True)
+    minimum = max(1, int(config.get("blackjack_min_bet", 10)))
+    maximum = max(minimum, int(config.get("blackjack_max_bet", 5000)))
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"Your bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            int(bet),
+            max(0, int(config.get("casino_starting_balance", 1000))),
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        currency = str(config.get("casino_currency") or "credits")[:24]
+        view = BlackjackView(
+            store=store,
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            display_name=getattr(interaction.user, "display_name", interaction.user.name),
+            session_id=session_id,
+            bet=int(bet),
+            currency=currency,
+            balance_after_bet=int(wallet.get("balance", 0)),
+            embed_factory=lambda title, description, color: make_branded_embed(config, title, description, color),
+            report_error=report_exception,
+            dealer_hits_soft_17=bool(config.get("blackjack_dealer_hits_soft_17")),
+        )
+        await view.resolve_initial()
+        await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
+        view.message = await interaction.original_response()
+        await save_event("casino_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "blackjack_started", "bet": int(bet)})
+    except Exception as exc:
+        if session_id:
+            await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True)
+        incident = await report_exception("blackjack_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        await interaction.edit_original_response(content=f"The table could not be opened. Your bet was refunded. Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="balance", description="Check your virtual casino balance and blackjack record.")
+@guild_enabled_or_owner()
+async def balance(interaction: discord.Interaction):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Balances are server-specific.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    store = CasinoStore(mdb)
+    wallet = await store.ensure_wallet(interaction.guild.id, interaction.user.id, max(0, int(config.get("casino_starting_balance", 1000))))
+    currency = str(config.get("casino_currency") or "credits")
+    embed = make_branded_embed(config, f"{interaction.user.display_name}'s Wallet", "Virtual credits are for server entertainment only and have no cash value.")
+    embed.add_field(name="Balance", value=format_amount(int(wallet.get("balance", 0)), currency), inline=False)
+    embed.add_field(name="Wins", value=str(wallet.get("wins", 0)), inline=True)
+    embed.add_field(name="Losses", value=str(wallet.get("losses", 0)), inline=True)
+    embed.add_field(name="Pushes", value=str(wallet.get("pushes", 0)), inline=True)
+    embed.add_field(name="Blackjacks", value=str(wallet.get("blackjacks", 0)), inline=True)
+    embed.add_field(name="Total wagered", value=format_amount(int(wallet.get("wagered", 0)), currency), inline=True)
+    embed.add_field(name="Net result", value=format_amount(int(wallet.get("profit", 0)), currency), inline=True)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="daily", description="Claim the server's daily virtual-credit reward.")
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def daily(interaction: discord.Interaction):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Daily rewards are server-specific.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True):
+        return await safe_interaction_send(interaction, "The casino economy is disabled here.", ephemeral=True)
+    store = CasinoStore(mdb)
+    await store.ensure_wallet(interaction.guild.id, interaction.user.id, max(0, int(config.get("casino_starting_balance", 1000))))
+    today = utcnow().date().isoformat()
+    reward = max(0, int(config.get("casino_daily_reward", 250)))
+    wallet = await mdb.casino_wallets.find_one_and_update(
+        {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "last_daily_claim": {"$ne": today}},
+        {"$inc": {"balance": reward}, "$set": {"last_daily_claim": today, "updated_at": utcnow()}},
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 0},
+    )
+    currency = str(config.get("casino_currency") or "credits")
+    if not wallet:
+        return await safe_interaction_send(interaction, "You already claimed today's reward. The next claim unlocks after **00:00 UTC**.", ephemeral=True)
+    embed = make_branded_embed(config, "Daily reward claimed", f"You received **{format_amount(reward, currency)}**.", SUCCESS_COLOR)
+    embed.add_field(name="New balance", value=format_amount(int(wallet.get("balance", 0)), currency), inline=False)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="casino_leaderboard", description="Show the richest virtual-credit wallets in this server.")
+@guild_enabled_or_owner()
+async def casino_leaderboard(interaction: discord.Interaction):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Leaderboards are server-specific.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    currency = str(config.get("casino_currency") or "credits")
+    wallets = await mdb.casino_wallets.find({"guild_id": interaction.guild.id}, {"_id": 0}).sort("balance", -1).limit(10).to_list(length=10)
+    lines = []
+    medals = ["🥇", "🥈", "🥉"]
+    for index, wallet in enumerate(wallets, 1):
+        member = interaction.guild.get_member(int(wallet.get("user_id", 0)))
+        name = member.display_name if member else f"User {wallet.get('user_id', 'unknown')}"
+        prefix = medals[index - 1] if index <= 3 else f"`#{index}`"
+        lines.append(f"{prefix} **{discord.utils.escape_markdown(name)}** — {format_amount(int(wallet.get('balance', 0)), currency)}")
+    embed = make_branded_embed(config, "Casino Leaderboard", "\n".join(lines) if lines else "No one has opened a casino wallet yet.")
+    embed.set_footer(text=f"Virtual {currency} have no real-world value")
+    await safe_interaction_send(interaction, embed=embed)
+
+
+@bot.tree.command(name="setup_audit", description="Check permissions, role hierarchy, channels, and production configuration.")
+@admin_only()
+async def setup_audit(interaction: discord.Interaction):
+    guild = interaction.guild
+    config = await get_guild_config(guild.id)
+    me = guild.me
+    issues: list[str] = []
+    passed: list[str] = []
+    required_permissions = {
+        "Manage Roles": me.guild_permissions.manage_roles,
+        "Manage Channels": me.guild_permissions.manage_channels,
+        "Send Messages": me.guild_permissions.send_messages,
+        "Embed Links": me.guild_permissions.embed_links,
+        "Attach Files": me.guild_permissions.attach_files,
+        "Read Message History": me.guild_permissions.read_message_history,
+    }
+    for label, ok in required_permissions.items():
+        (passed if ok else issues).append(f"{'✅' if ok else '❌'} {label}")
+    verified_role = guild.get_role(int(config.get("verified_role") or 0))
+    if not verified_role:
+        issues.append("❌ Verified role is not configured")
+    elif verified_role >= me.top_role:
+        issues.append("❌ Verified role must be below the bot's highest role")
+    else:
+        passed.append("✅ Verified role hierarchy")
+    if not isinstance(guild.get_channel(int(config.get("ticket_category") or 0)), discord.CategoryChannel):
+        issues.append("❌ Ticket category is not configured")
+    else:
+        passed.append("✅ Ticket category")
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
+        issues.append("❌ Discord OAuth environment values are missing")
+    else:
+        passed.append("✅ OAuth environment values")
+    embed = make_branded_embed(config, "Production Setup Audit", "Fix the red items before sending public panels.", SUCCESS_COLOR if not issues else WARNING_COLOR)
+    embed.add_field(name="Ready", value="\n".join(passed) or "None yet", inline=False)
+    embed.add_field(name="Needs attention", value="\n".join(issues) or "✅ No blocking issues found", inline=False)
+    embed.add_field(name="Dashboard", value=PUBLIC_BASE_URL, inline=False)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
 
 # =========================
 # PRODUCTION COMMANDS / ERROR REPORTING
@@ -1687,7 +2315,7 @@ async def log_command_event(interaction: discord.Interaction, event: str, **extr
     config = await get_guild_config(interaction.guild.id)
     channel = interaction.guild.get_channel(int(config.get("command_log_channel") or 0))
     if isinstance(channel, discord.TextChannel):
-        embed = make_embed("Command activity", f"**{event}** by {interaction.user.mention}", INFO_COLOR)
+        embed = make_branded_embed(config, "Command activity", f"**{event}** by {interaction.user.mention}", INFO_COLOR)
         if extra:
             embed.add_field(name="Details", value="\n".join(f"**{k}:** {v}" for k, v in extra.items())[:1000], inline=False)
         await safe_channel_send(channel, embed=embed, allowed_mentions=discord.AllowedMentions.none())
@@ -1698,7 +2326,7 @@ async def log_moderation(guild: discord.Guild, moderator: discord.Member, action
     config = await get_guild_config(guild.id)
     channel = guild.get_channel(int(config.get("moderation_log_channel") or 0))
     if isinstance(channel, discord.TextChannel):
-        embed = make_embed(f"Moderation: {action}", f"**Target:** {target.mention} (`{target.id}`)\n**Moderator:** {moderator.mention}\n**Reason:** {reason}", ERROR_COLOR if action in {"ban", "kick", "timeout"} else INFO_COLOR)
+        embed = make_branded_embed(config, f"Moderation: {action}", f"**Target:** {target.mention} (`{target.id}`)\n**Moderator:** {moderator.mention}\n**Reason:** {reason}", ERROR_COLOR if action in {"ban", "kick", "timeout"} else INFO_COLOR)
         await safe_channel_send(channel, embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -1706,22 +2334,39 @@ async def log_moderation(guild: discord.Guild, moderator: discord.Member, action
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
         return await safe_interaction_send(interaction, f"Slow down — try again in **{error.retry_after:.1f}s**.", ephemeral=True)
-    if isinstance(error, app_commands.MissingPermissions):
-        return await safe_interaction_send(interaction, "You do not have permission to use that command.", ephemeral=True)
+    if isinstance(error, (app_commands.MissingPermissions, app_commands.BotMissingPermissions)):
+        missing = getattr(error, "missing_permissions", [])
+        detail = ", ".join(str(item).replace("_", " ").title() for item in missing)
+        return await safe_interaction_send(interaction, f"Missing permission{'' if len(missing) == 1 else 's'}: **{detail or 'unknown'}**.", ephemeral=True)
+    if isinstance(error, app_commands.TransformerError):
+        return await safe_interaction_send(interaction, "One of the command values is invalid. Check the selected member, channel, role, or number and try again.", ephemeral=True)
+    if isinstance(error, app_commands.CommandSignatureMismatch):
+        return await safe_interaction_send(interaction, "Discord has an older copy of this command. An administrator should sync commands once, then try again.", ephemeral=True)
     if isinstance(error, app_commands.CheckFailure):
         if not interaction.response.is_done():
             await safe_interaction_send(interaction, "That command is not available to you here.", ephemeral=True)
         return
+
     original = getattr(error, "original", error)
-    log.exception("Unhandled app command error: %s", original)
+    incident = await report_exception(
+        "app_command",
+        original,
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        details={"command": interaction.command.qualified_name if interaction.command else "unknown", "channel_id": interaction.channel_id},
+    )
     if interaction.guild:
-        await save_event("dashboard_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "command_error", "reason": str(original)[:500]})
-    await safe_interaction_send(interaction, "That command hit an unexpected error. It was logged for review.", ephemeral=True)
+        try:
+            await save_event("dashboard_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "command_error", "incident_id": incident})
+        except Exception:
+            pass
+    await safe_interaction_send(interaction, f"That command hit an unexpected error. It has been logged as `{incident}`.", ephemeral=True)
 
 
 @bot.event
 async def on_error(event_method: str, *args, **kwargs):
-    log.exception("Unhandled Discord event error in %s", event_method)
+    exc = sys.exc_info()[1] or RuntimeError(f"Unknown event failure in {event_method}")
+    await report_exception(f"discord_event:{event_method}", exc)
 
 
 @bot.tree.command(name="serverinfo", description="Show useful information about this server.")
@@ -1732,7 +2377,8 @@ async def serverinfo(interaction: discord.Interaction):
     if not guild:
         return await safe_interaction_send(interaction, "This command only works in a server.", ephemeral=True)
     humans = sum(1 for m in guild.members if not m.bot)
-    embed = make_embed(guild.name, "Live server overview.")
+    config = await get_guild_config(guild.id)
+    embed = make_branded_embed(config, guild.name, "Live server overview.")
     if guild.icon: embed.set_thumbnail(url=guild.icon.url)
     embed.add_field(name="Members", value=f"{guild.member_count or len(guild.members)} total\n{humans} humans", inline=True)
     embed.add_field(name="Channels", value=f"{len(guild.text_channels)} text\n{len(guild.voice_channels)} voice", inline=True)
@@ -1746,7 +2392,8 @@ async def serverinfo(interaction: discord.Interaction):
 @guild_enabled_or_owner()
 async def userinfo(interaction: discord.Interaction, member: Optional[discord.Member] = None):
     member = member or interaction.user
-    embed = make_embed(str(member), f"Information for {member.mention}.")
+    config = await get_guild_config(interaction.guild.id)
+    embed = make_branded_embed(config, str(member), f"Information for {member.mention}.")
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.add_field(name="Joined", value=discord.utils.format_dt(member.joined_at, style="R") if member.joined_at else "Unknown", inline=True)
     embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, style="R"), inline=True)
@@ -1759,7 +2406,8 @@ async def userinfo(interaction: discord.Interaction, member: Optional[discord.Me
 @guild_enabled_or_owner()
 async def avatar(interaction: discord.Interaction, member: Optional[discord.Member] = None):
     member = member or interaction.user
-    embed = make_embed(f"{member.display_name}'s avatar", f"[Open original]({member.display_avatar.url})")
+    config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
+    embed = make_branded_embed(config, f"{member.display_name}'s avatar", f"[Open original]({member.display_avatar.url})")
     embed.set_image(url=member.display_avatar.url)
     await safe_interaction_send(interaction, embed=embed)
 
@@ -1812,7 +2460,8 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     await mdb.warnings.insert_one({"guild_id": interaction.guild.id, "user_id": member.id, "moderator_id": interaction.user.id, "reason": reason[:1000], "created_at": now_iso()})
     count = await mdb.warnings.count_documents({"guild_id": interaction.guild.id, "user_id": member.id})
     await log_moderation(interaction.guild, interaction.user, "warn", member, reason)
-    await safe_user_send(member, embed=make_embed(f"Warning in {interaction.guild.name}", reason, ERROR_COLOR))
+    config = await get_guild_config(interaction.guild.id)
+    await safe_user_send(member, embed=make_branded_embed(config, f"Warning in {interaction.guild.name}", reason, ERROR_COLOR))
     await safe_interaction_send(interaction, f"Warned {member.mention}. They now have **{count}** warning(s).", ephemeral=True)
 
 
@@ -1820,7 +2469,8 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
 @admin_only()
 async def warnings(interaction: discord.Interaction, member: discord.Member):
     items = await mdb.warnings.find({"guild_id": interaction.guild.id, "user_id": member.id}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(length=10)
-    embed = make_embed(f"Warnings for {member}", f"Showing {len(items)} most recent warning(s).")
+    config = await get_guild_config(interaction.guild.id)
+    embed = make_branded_embed(config, f"Warnings for {member}", f"Showing {len(items)} most recent warning(s).")
     for idx, item in enumerate(items, 1):
         embed.add_field(name=f"#{idx} • {str(item.get('created_at',''))[:10]}", value=f"{item.get('reason','No reason')[:700]}\nModerator: `{item.get('moderator_id','unknown')}`", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
@@ -1865,7 +2515,7 @@ async def unlock_channel(interaction: discord.Interaction, reason: str = "Channe
 @bot.tree.command(name="ticket_add", description="Add a member to the current support ticket.")
 @admin_only()
 async def ticket_add(interaction: discord.Interaction, member: discord.Member):
-    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "ticket_owner=" not in interaction.channel.topic:
+    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "owner_id=" not in interaction.channel.topic:
         return await safe_interaction_send(interaction, "This is not a managed ticket channel.", ephemeral=True)
     await discord_guarded("ticket add member", f"permission:{interaction.channel.id}", lambda: interaction.channel.set_permissions(member, view_channel=True, send_messages=True, read_message_history=True), min_gap=3.0, default=None)
     await log_command_event(interaction, "ticket_add", channel=interaction.channel.id, member=member.id)
@@ -1875,7 +2525,7 @@ async def ticket_add(interaction: discord.Interaction, member: discord.Member):
 @bot.tree.command(name="ticket_rename", description="Rename the current support ticket.")
 @admin_only()
 async def ticket_rename(interaction: discord.Interaction, name: str):
-    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "ticket_owner=" not in interaction.channel.topic:
+    if not isinstance(interaction.channel, discord.TextChannel) or not interaction.channel.topic or "owner_id=" not in interaction.channel.topic:
         return await safe_interaction_send(interaction, "This is not a managed ticket channel.", ephemeral=True)
     clean = clean_channel_name(name)[:90]
     await safe_channel_edit(interaction.channel, name=clean, reason=f"Ticket renamed by {interaction.user}")
@@ -1904,6 +2554,7 @@ async def run_forever_without_restart_loop() -> None:
         "DISCORD_CLIENT_SECRET": DISCORD_CLIENT_SECRET,
         "PUBLIC_BASE_URL": PUBLIC_BASE_URL,
         "MONGO_URI": MONGO_URI,
+        "DASHBOARD_SECRET": DASHBOARD_SECRET,
     }.items() if not value]
     if missing:
         raise RuntimeError(f"Missing required .env values: {', '.join(missing)}")
@@ -1949,5 +2600,23 @@ async def run_forever_without_restart_loop() -> None:
                 await asyncio.sleep(3600)
 
 
+async def main() -> None:
+    global http_session
+    try:
+        await run_forever_without_restart_loop()
+    finally:
+        if not bot.is_closed():
+            await bot.close()
+        if http_session and not http_session.closed:
+            await http_session.close()
+        if web_runner:
+            await web_runner.cleanup()
+        if mongo_client:
+            mongo_client.close()
+
+
 if __name__ == "__main__":
-    asyncio.run(run_forever_without_restart_loop())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Shutdown requested")
