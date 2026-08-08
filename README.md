@@ -1,6 +1,6 @@
-# moealturej Discord Bot — Production Build 3.1
+# moealturej Discord Bot — Production Build 3.2
 
-A private, MongoDB-backed Discord operations bot with a web dashboard, secure OAuth verification, professional support tickets, moderation tools, live server statistics, message composers, and an interactive blackjack economy.
+A private, MongoDB-backed Discord operations bot with a web dashboard, secure OAuth verification, professional support tickets, moderation tools, live server statistics, message composers, and a complete provably-fair virtual-credit casino suite.
 
 ## Major systems
 
@@ -40,9 +40,25 @@ A private, MongoDB-backed Discord operations bot with a web dashboard, secure OA
 - `/balance`, `/daily`, and `/casino_leaderboard` remain available.
 - Virtual credits have no real-world cash value.
 
+### Provably-fair casino suite
+
+Every game uses the same server-specific virtual wallet, one-active-game lock, MongoDB settlement history, technical-error refunds, and configurable payout ceiling. Credits have no cash value.
+
+- `/plinko` — 8, 10, or 12 rows; low, medium, or high risk; one to five balls; probability-balanced multiplier tables at approximately 96% theoretical RTP.
+- `/mines` — interactive 20-tile board with 1–15 mines; cash-out values are calculated directly from combinations rather than arbitrary tables; untouched timeouts refund and active timeouts cash out safely.
+- `/higher_lower` — a real shuffled 52-card deck with Ace low, King high, ties pushing, remaining-deck probabilities shown before every choice, and automatic timeout cash-out.
+- `/slots` — three fixed-reel machines with low, medium, and high volatility; five equal paylines; published paytables; no result-generated near misses; approximately 96% theoretical RTP.
+- `/roulette` — European single-zero wheel, standard straight/even-money/dozen/column payouts, and an exact 2.70% house edge.
+- `/casino_rules` — publishes the active fairness model, RTP, payout ceiling, and economy protections.
+- `/balance` now includes per-game activity and net results.
+
+Fairness uses a SHA-256 commitment and an HMAC-SHA256 deterministic stream. Interactive games show the commitment before decisions and reveal the server seed after settlement. Whole-credit payouts use deterministic unbiased rounding from that same seed, preventing low wagers from suffering hidden truncation.
+
+For MongoDB Atlas or another replica set, wallet reservation and settlement use multi-document transactions. Standalone MongoDB remains supported with compensating refunds and stale-session recovery, but a replica set is recommended for the strongest crash consistency.
+
 ### Dashboard and production operations
 
-- Clean collapsible settings for brand, verification, welcome, tickets, logs, and casino.
+- Clean collapsible settings for brand, verification, welcome, tickets, logs, economy safeguards, every casino game, and blackjack rules.
 - Live setup audit for missing permissions, role hierarchy, and required channels.
 - Announcement, custom embed, and direct-message composers.
 - Security headers, cross-origin write protection, signed sessions, and request IDs.
@@ -75,7 +91,7 @@ A private, MongoDB-backed Discord operations bot with a web dashboard, secure OA
 
 - Existing MongoDB guild settings are migrated automatically by filling in missing defaults.
 - Existing ticket and verification panel messages still respond because their persistent component IDs were preserved. Send new panels to display the customizable labels and improved copy.
-- Existing wallet documents are not overwritten. New users receive the configured starting balance when they first use a casino command.
+- Existing wallet documents are not overwritten. New game statistics and defaults migrate lazily, and new users receive the configured starting balance when they first use a casino command.
 - The dashboard remains owner-only by default. Set `DASHBOARD_OWNER_ONLY=false` to allow Discord server owners or members with **Manage Server** to access their own connected server configuration.
 
 ## Channel-name template variables

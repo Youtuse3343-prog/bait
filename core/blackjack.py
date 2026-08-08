@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import discord
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import ConfigurationError, DuplicateKeyError, OperationFailure
 
 
 Card = tuple[str, str]
@@ -221,6 +221,16 @@ class PlayerHand:
     outcome: str = ""
 
 
+class _InsufficientCasinoBalance(Exception):
+    pass
+
+
+def _transactions_unavailable(exc: BaseException) -> bool:
+    code = getattr(exc, "code", None)
+    message = str(exc).lower()
+    return code in {20, 263, 303} or "transaction numbers are only allowed" in message or "does not support transactions" in message or "sessions are not supported" in message
+
+
 class CasinoStore:
     """Atomic MongoDB operations used by the casino commands and views."""
 
@@ -250,29 +260,66 @@ class CasinoStore:
         )
 
     async def reserve_game(
-        self, guild_id: int, user_id: int, bet: int, starting_balance: int
+        self,
+        guild_id: int,
+        user_id: int,
+        bet: int,
+        starting_balance: int,
+        *,
+        game: str = "blackjack",
+        metadata: Optional[dict[str, Any]] = None,
+        play_minutes: int = 10,
     ) -> tuple[bool, str, Optional[dict[str, Any]]]:
         await self.ensure_wallet(guild_id, user_id, starting_balance)
         session_id = secrets.token_urlsafe(16)
-        try:
-            await self.db.casino_sessions.insert_one(
-                {
-                    "session_id": session_id,
-                    "guild_id": int(guild_id),
-                    "user_id": int(user_id),
-                    "bet": int(bet),
-                    "status": "active",
-                    "created_at": utcnow(),
-                    "play_deadline": utcnow() + timedelta(minutes=10),
-                    "expires_at": utcnow() + timedelta(days=7),
-                }
-            )
-        except DuplicateKeyError:
-            return False, "You already have an active blackjack table. Finish that game first.", None
+        now = utcnow()
+        session_doc = {
+            "session_id": session_id,
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "bet": int(bet),
+            "game": str(game or "casino")[:32],
+            "metadata": dict(metadata or {}),
+            "status": "active",
+            "created_at": now,
+            "play_deadline": now + timedelta(minutes=max(1, int(play_minutes))),
+            "expires_at": now + timedelta(days=7),
+        }
 
+        # MongoDB Atlas/replica sets support transactions. Use one whenever
+        # available so the active-session lock and wallet debit commit together.
+        try:
+            async with await self.db.client.start_session() as mongo_session:
+                async with mongo_session.start_transaction():
+                    await self.db.casino_sessions.insert_one(session_doc, session=mongo_session)
+                    wallet = await self.db.casino_wallets.find_one_and_update(
+                        {"guild_id": int(guild_id), "user_id": int(user_id), "balance": {"$gte": int(bet)}},
+                        {"$inc": {"balance": -int(bet), "wagered": int(bet)}, "$set": {"updated_at": now}},
+                        return_document=ReturnDocument.AFTER,
+                        projection={"_id": 0},
+                        session=mongo_session,
+                    )
+                    if not wallet:
+                        raise _InsufficientCasinoBalance()
+            wallet["session_id"] = session_id
+            return True, session_id, wallet
+        except _InsufficientCasinoBalance:
+            return False, "Your balance is too low for that bet.", None
+        except DuplicateKeyError:
+            return False, "You already have an active casino game. Finish it before starting another.", None
+        except (OperationFailure, ConfigurationError) as exc:
+            if not _transactions_unavailable(exc):
+                raise
+
+        # Standalone MongoDB fallback. Each reversal is compensating and the
+        # stale-session worker protects normal process interruptions.
+        try:
+            await self.db.casino_sessions.insert_one(session_doc)
+        except DuplicateKeyError:
+            return False, "You already have an active casino game. Finish it before starting another.", None
         wallet = await self.db.casino_wallets.find_one_and_update(
             {"guild_id": int(guild_id), "user_id": int(user_id), "balance": {"$gte": int(bet)}},
-            {"$inc": {"balance": -int(bet), "wagered": int(bet)}, "$set": {"updated_at": utcnow()}},
+            {"$inc": {"balance": -int(bet), "wagered": int(bet)}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
             projection={"_id": 0},
         )
@@ -308,59 +355,138 @@ class CasinoStore:
     async def reserve_double(self, session_id: str, guild_id: int, user_id: int, amount: int) -> bool:
         return await self.reserve_additional_wager(session_id, guild_id, user_id, amount)
 
-    async def settle(
-        self, session_id: str, guild_id: int, user_id: int, result: GameResult, total_wager: int
+    async def touch_session(self, session_id: str, *, play_minutes: int = 10) -> bool:
+        result = await self.db.casino_sessions.update_one(
+            {"session_id": session_id, "status": "active"},
+            {"$set": {
+                "updated_at": utcnow(),
+                "play_deadline": utcnow() + timedelta(minutes=max(1, int(play_minutes))),
+                "expires_at": utcnow() + timedelta(days=7),
+            }},
+        )
+        return result.modified_count == 1
+
+    async def settle_game(
+        self,
+        session_id: str,
+        guild_id: int,
+        user_id: int,
+        *,
+        game: str,
+        result_key: str,
+        payout: int,
+        total_wager: int,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> Optional[dict[str, Any]]:
+        game_key = "".join(ch for ch in str(game or "casino").lower() if ch.isalnum() or ch == "_")[:24] or "casino"
+        result_key = str(result_key or "loss").lower()[:24]
+        payout = max(0, int(payout))
+        total_wager = max(0, int(total_wager))
+        now = utcnow()
+        profit = payout - total_wager
+        inc: dict[str, int] = {
+            "balance": payout,
+            "profit": profit,
+            f"game_stats.{game_key}.played": 1,
+            f"game_stats.{game_key}.wagered": total_wager,
+            f"game_stats.{game_key}.profit": profit,
+        }
+        if result_key in {"win", "blackjack"}:
+            inc["wins"] = 1
+            inc[f"game_stats.{game_key}.wins"] = 1
+        elif result_key in {"push", "refund"}:
+            inc["pushes"] = 1
+            inc[f"game_stats.{game_key}.pushes"] = 1
+        else:
+            inc["losses"] = 1
+            inc[f"game_stats.{game_key}.losses"] = 1
+        if game_key == "blackjack" and result_key == "blackjack":
+            inc["blackjacks"] = 1
+
+        session_update = {"$set": {
+            "status": "settled",
+            "game": game_key,
+            "result": result_key,
+            "payout": payout,
+            "total_wager": total_wager,
+            "settled_at": now,
+            "settlement_metadata": dict(metadata or {}),
+        }}
+        event_doc = {
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "session_id": session_id,
+            "event": f"{game_key}_settled",
+            "game": game_key,
+            "result": result_key,
+            "wager": total_wager,
+            "payout": payout,
+            "metadata": dict(metadata or {}),
+            "created_at": now,
+        }
+
+        try:
+            async with await self.db.client.start_session() as mongo_session:
+                async with mongo_session.start_transaction():
+                    claimed = await self.db.casino_sessions.find_one_and_update(
+                        {"session_id": session_id, "status": "active"},
+                        session_update,
+                        return_document=ReturnDocument.AFTER,
+                        session=mongo_session,
+                    )
+                    if not claimed:
+                        return await self.db.casino_wallets.find_one(
+                            {"guild_id": int(guild_id), "user_id": int(user_id)}, {"_id": 0}, session=mongo_session
+                        )
+                    wallet = await self.db.casino_wallets.find_one_and_update(
+                        {"guild_id": int(guild_id), "user_id": int(user_id)},
+                        {"$inc": inc, "$set": {"updated_at": now}},
+                        return_document=ReturnDocument.AFTER,
+                        projection={"_id": 0},
+                        session=mongo_session,
+                    )
+                    await self.db.casino_events.insert_one(event_doc, session=mongo_session)
+                    await self.db.casino_sessions.delete_one({"session_id": session_id}, session=mongo_session)
+            return wallet
+        except (OperationFailure, ConfigurationError) as exc:
+            if not _transactions_unavailable(exc):
+                raise
+
+        # Standalone MongoDB fallback. Claim first to prevent duplicate payouts.
         claimed = await self.db.casino_sessions.find_one_and_update(
             {"session_id": session_id, "status": "active"},
-            {
-                "$set": {
-                    "status": "settled",
-                    "result": result.key,
-                    "payout": int(result.payout),
-                    "total_wager": int(total_wager),
-                    "settled_at": utcnow(),
-                }
-            },
+            session_update,
             return_document=ReturnDocument.AFTER,
         )
         if not claimed:
             return await self.db.casino_wallets.find_one(
                 {"guild_id": int(guild_id), "user_id": int(user_id)}, {"_id": 0}
             )
-
-        inc: dict[str, int] = {"balance": int(result.payout), "profit": int(result.payout - total_wager)}
-        if result.key in {"win", "blackjack"}:
-            inc["wins"] = 1
-        if result.key == "blackjack":
-            inc["blackjacks"] = 1
-        elif result.key == "loss":
-            inc["losses"] = 1
-        elif result.key == "push":
-            inc["pushes"] = 1
-
         wallet = await self.db.casino_wallets.find_one_and_update(
             {"guild_id": int(guild_id), "user_id": int(user_id)},
-            {"$inc": inc, "$set": {"updated_at": utcnow()}},
+            {"$inc": inc, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
             projection={"_id": 0},
         )
+        await self.db.casino_events.insert_one(event_doc)
         await self.db.casino_sessions.delete_one({"session_id": session_id})
-        await self.db.casino_events.insert_one(
-            {
-                "guild_id": int(guild_id),
-                "user_id": int(user_id),
-                "session_id": session_id,
-                "event": "blackjack_settled",
-                "result": result.key,
-                "wager": int(total_wager),
-                "payout": int(result.payout),
-                "created_at": utcnow(),
-            }
-        )
         return wallet
 
-    async def abandon(self, session_id: str, guild_id: int, user_id: int, total_wager: int, *, refund: bool) -> None:
+    async def settle(
+        self, session_id: str, guild_id: int, user_id: int, result: GameResult, total_wager: int
+    ) -> Optional[dict[str, Any]]:
+        return await self.settle_game(
+            session_id,
+            guild_id,
+            user_id,
+            game="blackjack",
+            result_key=result.key,
+            payout=int(result.payout),
+            total_wager=int(total_wager),
+            metadata={"title": result.title, "detail": result.detail},
+        )
+
+    async def abandon(self, session_id: str, guild_id: int, user_id: int, total_wager: int, *, refund: bool) -> bool:
         claimed = await self.db.casino_sessions.find_one_and_delete({"session_id": session_id, "status": "active"})
         if claimed and refund:
             actual_wager = int(claimed.get("bet", total_wager))
@@ -368,6 +494,7 @@ class CasinoStore:
                 {"guild_id": int(guild_id), "user_id": int(user_id)},
                 {"$inc": {"balance": actual_wager, "wagered": -actual_wager}, "$set": {"updated_at": utcnow()}},
             )
+        return bool(claimed)
 
     async def refund_stale_sessions(self) -> int:
         """Atomically refund abandoned tables after a restart or lost interaction."""
@@ -401,7 +528,8 @@ class CasinoStore:
                     "guild_id": int(claimed["guild_id"]),
                     "user_id": int(claimed["user_id"]),
                     "session_id": claimed.get("session_id"),
-                    "event": "blackjack_stale_refund",
+                    "event": f"{str(claimed.get('game') or 'casino')}_stale_refund",
+                    "game": str(claimed.get("game") or "casino"),
                     "wager": wager,
                     "created_at": now,
                 }

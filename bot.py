@@ -6,6 +6,7 @@ import html
 import io
 import json
 import logging
+import math
 import os
 import random
 import sys
@@ -25,8 +26,24 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 
 from core.blackjack import BlackjackView, CasinoStore, format_amount, rules_for_difficulty
+from core.casino_games import (
+    CASINO_RTP,
+    PLINKO_RISKS,
+    PLINKO_ROWS,
+    SLOT_MACHINES,
+    FairRound,
+    HigherLowerView,
+    MinesView,
+    ResolvedGame,
+    fairness_text,
+    parse_roulette_bet,
+    plinko_max_multiplier,
+    resolve_plinko,
+    resolve_roulette,
+    resolve_slots,
+)
 
-BUILD_VERSION = "3.1.0-realistic-blackjack"
+BUILD_VERSION = "3.2.0-casino-suite"
 
 load_dotenv()
 
@@ -399,6 +416,22 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "casino_currency": "credits",
     "casino_starting_balance": 1000,
     "casino_daily_reward": 250,
+    "casino_max_payout": 1000000,
+    "plinko_enabled": True,
+    "plinko_min_bet": 10,
+    "plinko_max_bet": 2000,
+    "mines_enabled": True,
+    "mines_min_bet": 10,
+    "mines_max_bet": 5000,
+    "higher_lower_enabled": True,
+    "higher_lower_min_bet": 10,
+    "higher_lower_max_bet": 5000,
+    "slots_enabled": True,
+    "slots_min_bet": 10,
+    "slots_max_bet": 2000,
+    "roulette_enabled": True,
+    "roulette_min_bet": 10,
+    "roulette_max_bet": 2500,
     "blackjack_min_bet": 10,
     "blackjack_max_bet": 5000,
     "blackjack_difficulty": "hard",
@@ -1196,7 +1229,7 @@ async def guild_page(request: web.Request) -> web.Response:
     body = f"""
     <section class='hero compact-hero'>
       <span class='pill'>Control center</span><h1>{html.escape(guild.name)}</h1>
-      <p class='muted'>Configure branding, verification, tickets, welcome messages, moderation logs, and the blackjack economy without editing code.</p>
+      <p class='muted'>Configure branding, verification, tickets, welcome messages, moderation logs, and the full casino economy without editing code.</p>
       <div class='stats'><div class='stat'><span class='muted'>Members</span><b>{guild.member_count or len(guild.members)}</b></div><div class='stat'><span class='muted'>Open tickets</span><b>{open_tickets}</b></div><div class='stat'><span class='muted'>Verified</span><b>{verified_count}</b></div><div class='stat'><span class='muted'>Casino players</span><b>{wallet_count}</b></div></div>
     </section>
     {saved_banner}
@@ -1240,9 +1273,21 @@ async def guild_page(request: web.Request) -> web.Response:
         </div>
       </div></details>
 
-      <details open><summary><span><b>05</b> Blackjack & economy</span><small>Server-specific virtual credits; no real-money features</small></summary><div class='details-body'>
+      <details open><summary><span><b>05</b> Casino economy & games</span><small>Fair virtual credits, payout protection, and game availability</small></summary><div class='details-body'>
         <div class='row'><label>Casino<select name='casino_enabled'><option value='true' {selected(bool(config.get('casino_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('casino_enabled', True)))}>Disabled</option></select></label><label>Currency name<input name='casino_currency' maxlength='24' value='{html.escape(str(config.get('casino_currency') or 'credits'))}'></label></div>
         <div class='row'><label>Starting balance<input type='number' min='0' max='100000000' name='casino_starting_balance' value='{int(config.get('casino_starting_balance', 1000))}'></label><label>Daily reward<input type='number' min='0' max='100000000' name='casino_daily_reward' value='{int(config.get('casino_daily_reward', 250))}'></label></div>
+        <label>Maximum payout per round<input type='number' min='100' max='100000000' name='casino_max_payout' value='{int(config.get('casino_max_payout', 1000000))}'><small>Games reject oversized one-shot bets or automatically cash out interactive games at this disclosed limit.</small></label>
+        <div class='ticket-grid'>
+          <section class='subcard'><h3>Plinko</h3><label>Status<select name='plinko_enabled'><option value='true' {selected(bool(config.get('plinko_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('plinko_enabled', True)))}>Disabled</option></select></label><div class='row'><label>Min bet<input type='number' min='1' name='plinko_min_bet' value='{int(config.get('plinko_min_bet', 10))}'></label><label>Max per ball<input type='number' min='1' name='plinko_max_bet' value='{int(config.get('plinko_max_bet', 2000))}'></label></div><small>8/10/12 rows, three risk levels, 96% target RTP.</small></section>
+          <section class='subcard'><h3>Mines</h3><label>Status<select name='mines_enabled'><option value='true' {selected(bool(config.get('mines_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('mines_enabled', True)))}>Disabled</option></select></label><div class='row'><label>Min bet<input type='number' min='1' name='mines_min_bet' value='{int(config.get('mines_min_bet', 10))}'></label><label>Max bet<input type='number' min='1' name='mines_max_bet' value='{int(config.get('mines_max_bet', 5000))}'></label></div><small>20-tile board, probability-derived multipliers, 96% target RTP.</small></section>
+          <section class='subcard'><h3>Higher or Lower</h3><label>Status<select name='higher_lower_enabled'><option value='true' {selected(bool(config.get('higher_lower_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('higher_lower_enabled', True)))}>Disabled</option></select></label><div class='row'><label>Min bet<input type='number' min='1' name='higher_lower_min_bet' value='{int(config.get('higher_lower_min_bet', 10))}'></label><label>Max bet<input type='number' min='1' name='higher_lower_max_bet' value='{int(config.get('higher_lower_max_bet', 5000))}'></label></div><small>Real 52-card deck, ties push, odds shown before every choice.</small></section>
+          <section class='subcard'><h3>Slots</h3><label>Status<select name='slots_enabled'><option value='true' {selected(bool(config.get('slots_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('slots_enabled', True)))}>Disabled</option></select></label><div class='row'><label>Min bet<input type='number' min='1' name='slots_min_bet' value='{int(config.get('slots_min_bet', 10))}'></label><label>Max bet<input type='number' min='1' name='slots_max_bet' value='{int(config.get('slots_max_bet', 2000))}'></label></div><small>Three transparent volatility profiles with published paytables.</small></section>
+          <section class='subcard'><h3>European Roulette</h3><label>Status<select name='roulette_enabled'><option value='true' {selected(bool(config.get('roulette_enabled', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('roulette_enabled', True)))}>Disabled</option></select></label><div class='row'><label>Min bet<input type='number' min='1' name='roulette_min_bet' value='{int(config.get('roulette_min_bet', 10))}'></label><label>Max bet<input type='number' min='1' name='roulette_max_bet' value='{int(config.get('roulette_max_bet', 2500))}'></label></div><small>Single-zero wheel and standard casino payouts; 2.70% house edge.</small></section>
+          <section class='subcard'><h3>Fairness</h3><p class='muted'>Every new game uses HMAC-SHA256 commitments, secure deterministic outcomes, atomic MongoDB settlement, one active game per player, and automatic restart refunds.</p></section>
+        </div>
+      </div></details>
+
+      <details><summary><span><b>06</b> Blackjack table rules</span><small>Difficulty preset and authentic dealer behavior</small></summary><div class='details-body'>
         <div class='row'><label>Minimum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_min_bet' value='{int(config.get('blackjack_min_bet', 10))}'></label><label>Maximum blackjack bet<input type='number' min='1' max='100000000' name='blackjack_max_bet' value='{int(config.get('blackjack_max_bet', 5000))}'></label></div>
         <div class='row'><label>Difficulty preset<select name='blackjack_difficulty'>
           <option value='casual' {selected(str(config.get('blackjack_difficulty', 'hard')) == 'casual')}>Casual — friendlier rules</option>
@@ -1259,7 +1304,7 @@ async def guild_page(request: web.Request) -> web.Response:
         <label class='checkline'><input type='checkbox' name='blackjack_allow_split' {checked(bool(config.get('blackjack_allow_split', True)))}> Allow matching-value hands to split</label>
       </div></details>
 
-      <details><summary><span><b>06</b> Logs & moderation</span><small>Where operational events are recorded</small></summary><div class='details-body'>
+      <details><summary><span><b>07</b> Logs & moderation</span><small>Where operational events are recorded</small></summary><div class='details-body'>
         <div class='row'><label>Moderation logs<select name='moderation_log_channel'>{options(text_channels, config.get('moderation_log_channel'), prefix='#')}</select></label><label>Command logs<select name='command_log_channel'>{options(text_channels, config.get('command_log_channel'), prefix='#')}</select></label></div>
       </div></details>
 
@@ -1299,10 +1344,17 @@ async def guild_save(request: web.Request) -> web.Response:
     brand_color = text("brand_color", "7C3AED", 7).lstrip("#").upper()
     if len(brand_color) not in {3, 6} or any(ch not in string.hexdigits for ch in brand_color):
         brand_color = "7C3AED"
-    min_bet = as_int("blackjack_min_bet", 10, 1) or 10
-    max_bet = as_int("blackjack_max_bet", 5000, 1) or 5000
-    if max_bet < min_bet:
-        max_bet = min_bet
+    def bet_range(prefix: str, default_min: int, default_max: int) -> tuple[int, int]:
+        minimum = as_int(f"{prefix}_min_bet", default_min, 1) or default_min
+        maximum = as_int(f"{prefix}_max_bet", default_max, 1) or default_max
+        return minimum, max(minimum, maximum)
+
+    min_bet, max_bet = bet_range("blackjack", 10, 5000)
+    plinko_min, plinko_max = bet_range("plinko", 10, 2000)
+    mines_min, mines_max = bet_range("mines", 10, 5000)
+    hilo_min, hilo_max = bet_range("higher_lower", 10, 5000)
+    slots_min, slots_max = bet_range("slots", 10, 2000)
+    roulette_min, roulette_max = bet_range("roulette", 10, 2500)
 
     updates = {
         "enabled": as_bool("enabled"),
@@ -1351,6 +1403,22 @@ async def guild_save(request: web.Request) -> web.Response:
         "casino_currency": text("casino_currency", "credits", 24),
         "casino_starting_balance": as_int("casino_starting_balance", 1000, 0),
         "casino_daily_reward": as_int("casino_daily_reward", 250, 0),
+        "casino_max_payout": as_int("casino_max_payout", 1000000, 100, 100_000_000),
+        "plinko_enabled": as_bool("plinko_enabled"),
+        "plinko_min_bet": plinko_min,
+        "plinko_max_bet": plinko_max,
+        "mines_enabled": as_bool("mines_enabled"),
+        "mines_min_bet": mines_min,
+        "mines_max_bet": mines_max,
+        "higher_lower_enabled": as_bool("higher_lower_enabled"),
+        "higher_lower_min_bet": hilo_min,
+        "higher_lower_max_bet": hilo_max,
+        "slots_enabled": as_bool("slots_enabled"),
+        "slots_min_bet": slots_min,
+        "slots_max_bet": slots_max,
+        "roulette_enabled": as_bool("roulette_enabled"),
+        "roulette_min_bet": roulette_min,
+        "roulette_max_bet": roulette_max,
         "blackjack_min_bet": min_bet,
         "blackjack_max_bet": max_bet,
         "blackjack_difficulty": text("blackjack_difficulty", "hard", 12) if text("blackjack_difficulty", "hard", 12) in {"casual", "casino", "hard", "custom"} else "hard",
@@ -1984,9 +2052,9 @@ async def cleanup_blackjack_sessions():
     try:
         refunded = await CasinoStore(mdb).refund_stale_sessions()
         if refunded:
-            log.warning("Refunded %s abandoned blackjack session(s).", refunded)
+            log.warning("Refunded %s abandoned casino session(s).", refunded)
     except Exception as exc:
-        await report_exception("blackjack_stale_cleanup", exc)
+        await report_exception("casino_stale_cleanup", exc)
 
 
 @tasks.loop(minutes=5)
@@ -2026,7 +2094,14 @@ async def help_command(interaction: discord.Interaction):
     embed = make_branded_embed(config, "Command Center", "Useful commands are grouped below so members can find what they need quickly.")
     embed.add_field(name="Essentials", value="`/ping` latency • `/store` store link • `/serverinfo` server details • `/userinfo` member details • `/avatar` avatar", inline=False)
     if config.get("casino_enabled", True):
-        embed.add_field(name="Blackjack", value="`/blackjack` play • `/blackjack_rules` rules • `/balance` wallet • `/daily` reward • `/casino_leaderboard` rankings", inline=False)
+        embed.add_field(
+            name="Casino & arcade",
+            value=(
+                "`/blackjack` • `/plinko` • `/mines` • `/higher_lower` • `/slots` • `/roulette`\n"
+                "`/casino_rules` fairness & payouts • `/balance` wallet • `/daily` reward • `/casino_leaderboard` rankings"
+            ),
+            inline=False,
+        )
     embed.add_field(name="Support", value="Use the server's Support Center panel to open a private ticket.", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
@@ -2251,10 +2326,10 @@ async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[in
         view.message = await interaction.original_response()
         await save_event("casino_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "blackjack_started", "bet": int(bet)})
     except Exception as exc:
-        if session_id:
-            await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True)
+        refunded = await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True) if session_id else False
         incident = await report_exception("blackjack_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
-        await interaction.edit_original_response(content=f"The table could not be opened. Your bet was refunded. Reference: `{incident}`", embed=None, view=None)
+        status = "Your bet was refunded." if refunded else "The round may already be settled; check `/balance`."
+        await interaction.edit_original_response(content=f"The table could not be opened. {status} Reference: `{incident}`", embed=None, view=None)
 
 
 @bot.tree.command(name="blackjack_rules", description="Show the blackjack difficulty and active house rules.")
@@ -2286,7 +2361,437 @@ async def blackjack_rules(interaction: discord.Interaction):
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="balance", description="Check your virtual casino balance and blackjack record.")
+
+async def record_fair_commit(
+    *, guild_id: int, user_id: int, session_id: str, game: str, fair: FairRound, wager: int
+) -> None:
+    await mdb.casino_events.insert_one(
+        {
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "session_id": session_id,
+            "game": game,
+            "event": f"{game}_fair_commit",
+            "wager": int(wager),
+            "fairness": fair.public_metadata(reveal=False),
+            "created_at": utcnow(),
+        }
+    )
+
+
+def casino_game_limits(config: Dict[str, Any], prefix: str, default_min: int, default_max: int) -> tuple[int, int]:
+    minimum = max(1, int(config.get(f"{prefix}_min_bet", default_min)))
+    maximum = max(minimum, int(config.get(f"{prefix}_max_bet", default_max)))
+    return minimum, maximum
+
+
+async def render_resolved_game(
+    interaction: discord.Interaction,
+    *,
+    config: Dict[str, Any],
+    store: CasinoStore,
+    session_id: str,
+    resolved: ResolvedGame,
+    fair: FairRound,
+) -> None:
+    currency = str(config.get("casino_currency") or "credits")[:24]
+    wallet = await store.settle_game(
+        session_id,
+        interaction.guild.id,
+        interaction.user.id,
+        game=resolved.game,
+        result_key=resolved.result_key,
+        payout=resolved.payout,
+        total_wager=resolved.wager,
+        metadata=resolved.metadata,
+    )
+    embed = make_branded_embed(config, resolved.title, resolved.description, resolved.color)
+    for name, value, inline in resolved.fields:
+        embed.add_field(name=name[:256], value=str(value)[:1024], inline=inline)
+    net = resolved.payout - resolved.wager
+    sign = "+" if net > 0 else ""
+    embed.add_field(name="Wager", value=format_amount(resolved.wager, currency), inline=True)
+    embed.add_field(name="Payout", value=format_amount(resolved.payout, currency), inline=True)
+    embed.add_field(name="Net", value=f"{sign}{format_amount(net, currency)}", inline=True)
+    if wallet:
+        embed.add_field(name="Wallet", value=format_amount(int(wallet.get("balance", 0)), currency), inline=False)
+    embed.add_field(name="Provably fair result", value=fairness_text(fair, reveal=True), inline=False)
+    try:
+        await interaction.edit_original_response(content=None, embed=embed, view=None)
+    except discord.HTTPException as exc:
+        incident = await report_exception(
+            f"{resolved.game}_result_render",
+            exc,
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            details={"session_id": session_id, "payout": resolved.payout},
+        )
+        try:
+            await interaction.edit_original_response(
+                content=(
+                    f"The round settled successfully for **{format_amount(resolved.payout, currency)}**, "
+                    f"but Discord could not render the result card. Check `/balance`. Reference: `{incident}`"
+                ),
+                embed=None,
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
+
+
+@bot.tree.command(name="plinko", description="Drop one to five balls through a fair Plinko board using virtual credits.")
+@app_commands.describe(bet="Credits wagered per ball", risk="Risk and volatility", rows="Number of peg rows", balls="Number of balls", private="Only show the result to you")
+@app_commands.choices(
+    risk=[
+        app_commands.Choice(name="Low risk", value="low"),
+        app_commands.Choice(name="Medium risk", value="medium"),
+        app_commands.Choice(name="High risk", value="high"),
+    ],
+    rows=[
+        app_commands.Choice(name="8 rows", value=8),
+        app_commands.Choice(name="10 rows", value=10),
+        app_commands.Choice(name="12 rows", value=12),
+    ],
+)
+@app_commands.checks.cooldown(1, 4.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def plinko(
+    interaction: discord.Interaction,
+    bet: app_commands.Range[int, 1, 100_000_000],
+    risk: app_commands.Choice[str],
+    rows: app_commands.Choice[int],
+    balls: app_commands.Range[int, 1, 5] = 1,
+    private: bool = False,
+):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Plinko is only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True) or not config.get("plinko_enabled", True):
+        return await safe_interaction_send(interaction, "Plinko is disabled in this server.", ephemeral=True)
+    minimum, maximum = casino_game_limits(config, "plinko", 10, 2000)
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"The per-ball bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+    risk_value = risk.value
+    row_count = rows.value
+    if risk_value not in PLINKO_RISKS or row_count not in PLINKO_ROWS:
+        return await safe_interaction_send(interaction, "Choose a valid Plinko risk and row count.", ephemeral=True)
+    max_payout = max(100, int(config.get("casino_max_payout", 1000000)))
+    potential = math.ceil(int(bet) * int(balls) * plinko_max_multiplier(risk_value, row_count))
+    if potential > max_payout:
+        allowed = max(1, math.floor(max_payout / (int(balls) * plinko_max_multiplier(risk_value, row_count))))
+        return await safe_interaction_send(interaction, f"That wager could exceed the server's **{max_payout:,}**-credit payout limit. Use **{allowed:,} credits or less per ball** for this board.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    total_wager = int(bet) * int(balls)
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            total_wager,
+            max(0, int(config.get("casino_starting_balance", 1000))),
+            game="plinko",
+            metadata={"risk": risk_value, "rows": row_count, "balls": int(balls), "bet_per_ball": int(bet)},
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        fair = FairRound.create(client_seed=str(interaction.user.id), nonce=session_id)
+        await record_fair_commit(guild_id=interaction.guild.id, user_id=interaction.user.id, session_id=session_id, game="plinko", fair=fair, wager=total_wager)
+        resolved = resolve_plinko(fair, bet_per_ball=int(bet), balls=int(balls), risk=risk_value, rows=row_count)
+        await render_resolved_game(interaction, config=config, store=store, session_id=session_id, resolved=resolved, fair=fair)
+    except Exception as exc:
+        refunded = await store.abandon(session_id, interaction.guild.id, interaction.user.id, total_wager, refund=True) if session_id else False
+        incident = await report_exception("plinko_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        status = "The wager was refunded." if refunded else "The round may already be settled; check `/balance`."
+        await interaction.edit_original_response(content=f"Plinko could not finish. {status} Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="mines", description="Play a probability-priced interactive Mines board with virtual credits.")
+@app_commands.describe(bet="Credits to wager", mines="Mines hidden across 20 tiles", private="Only show the board to you")
+@app_commands.checks.cooldown(1, 4.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def mines(
+    interaction: discord.Interaction,
+    bet: app_commands.Range[int, 1, 100_000_000],
+    mines: app_commands.Range[int, 1, 15] = 3,
+    private: bool = False,
+):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Mines is only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True) or not config.get("mines_enabled", True):
+        return await safe_interaction_send(interaction, "Mines is disabled in this server.", ephemeral=True)
+    minimum, maximum = casino_game_limits(config, "mines", 10, 5000)
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"Your bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            int(bet),
+            max(0, int(config.get("casino_starting_balance", 1000))),
+            game="mines",
+            metadata={"mines": int(mines)},
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        fair = FairRound.create(client_seed=str(interaction.user.id), nonce=session_id)
+        await record_fair_commit(guild_id=interaction.guild.id, user_id=interaction.user.id, session_id=session_id, game="mines", fair=fair, wager=int(bet))
+        view = MinesView(
+            store=store,
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            display_name=getattr(interaction.user, "display_name", interaction.user.name),
+            session_id=session_id,
+            bet=int(bet),
+            mines=int(mines),
+            currency=str(config.get("casino_currency") or "credits")[:24],
+            balance_after_bet=int(wallet.get("balance", 0)),
+            max_payout=max(100, int(config.get("casino_max_payout", 1000000))),
+            fair=fair,
+            embed_factory=lambda title, description, color: make_branded_embed(config, title, description, color),
+            report_error=report_exception,
+            rtp=CASINO_RTP,
+        )
+        await view.open_table(interaction)
+        view.message = await interaction.original_response()
+    except Exception as exc:
+        if session_id:
+            await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True)
+        incident = await report_exception("mines_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        await interaction.edit_original_response(content=f"The Mines board could not open, so the wager was refunded. Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="higher_lower", description="Predict higher or lower using a fair shuffled 52-card deck.")
+@app_commands.describe(bet="Credits to wager", private="Only show the table to you")
+@app_commands.checks.cooldown(1, 4.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def higher_lower(
+    interaction: discord.Interaction,
+    bet: app_commands.Range[int, 1, 100_000_000],
+    private: bool = False,
+):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Higher or Lower is only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True) or not config.get("higher_lower_enabled", True):
+        return await safe_interaction_send(interaction, "Higher or Lower is disabled in this server.", ephemeral=True)
+    minimum, maximum = casino_game_limits(config, "higher_lower", 10, 5000)
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"Your bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            int(bet),
+            max(0, int(config.get("casino_starting_balance", 1000))),
+            game="higher_lower",
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        fair = FairRound.create(client_seed=str(interaction.user.id), nonce=session_id)
+        await record_fair_commit(guild_id=interaction.guild.id, user_id=interaction.user.id, session_id=session_id, game="higher_lower", fair=fair, wager=int(bet))
+        view = HigherLowerView(
+            store=store,
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            display_name=getattr(interaction.user, "display_name", interaction.user.name),
+            session_id=session_id,
+            bet=int(bet),
+            currency=str(config.get("casino_currency") or "credits")[:24],
+            balance_after_bet=int(wallet.get("balance", 0)),
+            max_payout=max(100, int(config.get("casino_max_payout", 1000000))),
+            fair=fair,
+            embed_factory=lambda title, description, color: make_branded_embed(config, title, description, color),
+            report_error=report_exception,
+            rtp=CASINO_RTP,
+        )
+        await view.open_table(interaction)
+        view.message = await interaction.original_response()
+    except Exception as exc:
+        if session_id:
+            await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True)
+        incident = await report_exception("higher_lower_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        await interaction.edit_original_response(content=f"Higher or Lower could not open, so the wager was refunded. Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="slots", description="Spin a transparent fixed-reel slot machine using virtual credits.")
+@app_commands.describe(bet="Total credits across five paylines", machine="Machine volatility", private="Only show the result to you")
+@app_commands.choices(
+    machine=[
+        app_commands.Choice(name="Purple Fortune · low volatility", value="fortune"),
+        app_commands.Choice(name="Diamond Vault · medium volatility", value="vault"),
+        app_commands.Choice(name="Void Jackpot · high volatility", value="void"),
+    ]
+)
+@app_commands.checks.cooldown(1, 4.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def slots(
+    interaction: discord.Interaction,
+    bet: app_commands.Range[int, 1, 100_000_000],
+    machine: app_commands.Choice[str],
+    private: bool = False,
+):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Slots are only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True) or not config.get("slots_enabled", True):
+        return await safe_interaction_send(interaction, "Slots are disabled in this server.", ephemeral=True)
+    minimum, maximum = casino_game_limits(config, "slots", 10, 2000)
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"Your total spin bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+    selected_machine = SLOT_MACHINES.get(machine.value)
+    if not selected_machine:
+        return await safe_interaction_send(interaction, "Choose a valid slot machine.", ephemeral=True)
+    max_payout = max(100, int(config.get("casino_max_payout", 1000000)))
+    potential = math.ceil(int(bet) * selected_machine.max_multiplier)
+    if potential > max_payout:
+        allowed = max(1, math.floor(max_payout / selected_machine.max_multiplier))
+        return await safe_interaction_send(interaction, f"That spin could exceed the server's payout limit. Use **{allowed:,} credits or less** on {selected_machine.name}.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            int(bet),
+            max(0, int(config.get("casino_starting_balance", 1000))),
+            game="slots",
+            metadata={"machine": selected_machine.key},
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        fair = FairRound.create(client_seed=str(interaction.user.id), nonce=session_id)
+        await record_fair_commit(guild_id=interaction.guild.id, user_id=interaction.user.id, session_id=session_id, game="slots", fair=fair, wager=int(bet))
+        resolved = resolve_slots(fair, bet=int(bet), machine=selected_machine)
+        await render_resolved_game(interaction, config=config, store=store, session_id=session_id, resolved=resolved, fair=fair)
+    except Exception as exc:
+        refunded = await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True) if session_id else False
+        incident = await report_exception("slots_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        status = "The wager was refunded." if refunded else "The spin may already be settled; check `/balance`."
+        await interaction.edit_original_response(content=f"The slot spin could not finish. {status} Reference: `{incident}`", embed=None, view=None)
+
+
+@bot.tree.command(name="roulette", description="Play European single-zero roulette with standard casino payouts.")
+@app_commands.describe(bet="Credits to wager", wager="red, black, odd, even, low, high, dozen1-3, column1-3, or 0-36", private="Only show the result to you")
+@app_commands.checks.cooldown(1, 4.0, key=lambda i: (i.guild_id, i.user.id))
+@guild_enabled_or_owner()
+async def roulette(
+    interaction: discord.Interaction,
+    bet: app_commands.Range[int, 1, 100_000_000],
+    wager: str,
+    private: bool = False,
+):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Roulette is only available inside a server.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if not config.get("casino_enabled", True) or not config.get("roulette_enabled", True):
+        return await safe_interaction_send(interaction, "Roulette is disabled in this server.", ephemeral=True)
+    parsed = parse_roulette_bet(wager)
+    if not parsed:
+        return await safe_interaction_send(interaction, "Invalid wager. Use `red`, `black`, `odd`, `even`, `low`, `high`, `dozen1`, `dozen2`, `dozen3`, `column1`, `column2`, `column3`, or a number from `0` to `36`.", ephemeral=True)
+    minimum, maximum = casino_game_limits(config, "roulette", 10, 2500)
+    if int(bet) < minimum or int(bet) > maximum:
+        currency = str(config.get("casino_currency") or "credits")
+        return await safe_interaction_send(interaction, f"Your bet must be between **{format_amount(minimum, currency)}** and **{format_amount(maximum, currency)}**.", ephemeral=True)
+    max_payout = max(100, int(config.get("casino_max_payout", 1000000)))
+    if int(bet) * parsed.payout_multiplier > max_payout:
+        allowed = max(1, max_payout // parsed.payout_multiplier)
+        return await safe_interaction_send(interaction, f"That wager could exceed the server's payout limit. The maximum for **{parsed.label}** is **{allowed:,} credits**.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=private, thinking=True)
+    store = CasinoStore(mdb)
+    session_id = ""
+    try:
+        ok, message, wallet = await store.reserve_game(
+            interaction.guild.id,
+            interaction.user.id,
+            int(bet),
+            max(0, int(config.get("casino_starting_balance", 1000))),
+            game="roulette",
+            metadata={"wager": parsed.key},
+        )
+        if not ok or not wallet:
+            return await interaction.edit_original_response(content=message)
+        session_id = str(wallet["session_id"])
+        fair = FairRound.create(client_seed=str(interaction.user.id), nonce=session_id)
+        await record_fair_commit(guild_id=interaction.guild.id, user_id=interaction.user.id, session_id=session_id, game="roulette", fair=fair, wager=int(bet))
+        resolved = resolve_roulette(fair, bet=int(bet), wager=parsed)
+        await render_resolved_game(interaction, config=config, store=store, session_id=session_id, resolved=resolved, fair=fair)
+    except Exception as exc:
+        refunded = await store.abandon(session_id, interaction.guild.id, interaction.user.id, int(bet), refund=True) if session_id else False
+        incident = await report_exception("roulette_command", exc, guild_id=interaction.guild.id, user_id=interaction.user.id)
+        status = "The wager was refunded." if refunded else "The spin may already be settled; check `/balance`."
+        await interaction.edit_original_response(content=f"Roulette could not finish. {status} Reference: `{incident}`", embed=None, view=None)
+
+
+@roulette.autocomplete("wager")
+async def roulette_wager_autocomplete(interaction: discord.Interaction, current: str):
+    common = [
+        ("Red", "red"), ("Black", "black"), ("Odd", "odd"), ("Even", "even"),
+        ("Low 1-18", "low"), ("High 19-36", "high"),
+        ("1st dozen", "dozen1"), ("2nd dozen", "dozen2"), ("3rd dozen", "dozen3"),
+        ("1st column", "column1"), ("2nd column", "column2"), ("3rd column", "column3"),
+    ]
+    query = str(current or "").strip().lower()
+    choices = [app_commands.Choice(name=name, value=value) for name, value in common if query in name.lower() or query in value]
+    if query.isdigit() or not query:
+        number_choices = [
+            app_commands.Choice(name=f"Straight up {number}", value=str(number))
+            for number in range(37)
+            if not query or str(number).startswith(query)
+        ]
+        choices.extend(number_choices)
+    return choices[:25]
+
+
+@bot.tree.command(name="casino_rules", description="Show game odds, payout models, and the casino fairness standard.")
+@guild_enabled_or_owner()
+async def casino_rules(interaction: discord.Interaction):
+    if not interaction.guild:
+        return await safe_interaction_send(interaction, "Casino rules are server-specific.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    currency = str(config.get("casino_currency") or "credits")
+    max_payout = max(100, int(config.get("casino_max_payout", 1000000)))
+    slots_lines = "\n".join(
+        f"**{machine.name}:** {machine.rtp * 100:.2f}% RTP, {machine.volatility.lower()} volatility"
+        for machine in SLOT_MACHINES.values()
+    )
+    embed = make_branded_embed(
+        config,
+        "Casino Rules & Fairness",
+        f"All games use virtual **{currency}** with no cash value. Results never adapt to a player's balance, bet size, losses, or win streak.",
+    )
+    embed.add_field(name="Plinko", value="Binomial left/right paths • low/medium/high risk • approximately **96% RTP**", inline=False)
+    embed.add_field(name="Mines", value="Cash-out multipliers come directly from the probability of surviving the selected number of tiles, then apply a fixed **96% RTP**.", inline=False)
+    embed.add_field(name="Higher or Lower", value="A shuffled 52-card deck • Ace low, King high • equal ranks push • each decisive prediction applies a fixed **96% return** to its true remaining-deck odds.", inline=False)
+    embed.add_field(name="Slots", value=slots_lines + "\nFive equal paylines and fixed reel strips; no generated near-misses.", inline=False)
+    embed.add_field(name="European Roulette", value="Numbers 0–36 with one green zero • standard payouts • **97.30% RTP / 2.70% house edge**.", inline=False)
+    embed.add_field(name="Provably fair", value="Each round commits to `SHA-256(server seed)` and uses HMAC-SHA256 with the user ID and session nonce. The full server seed is revealed after settlement so the result can be reproduced.", inline=False)
+    embed.add_field(name="Economy protection", value=f"One active game per player • atomic settlement • technical-error refunds • timeout cash-outs/refunds • maximum round payout **{format_amount(max_payout, currency)}**", inline=False)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="balance", description="Check your virtual casino wallet and game record.")
 @guild_enabled_or_owner()
 async def balance(interaction: discord.Interaction):
     if not interaction.guild:
@@ -2303,6 +2808,25 @@ async def balance(interaction: discord.Interaction):
     embed.add_field(name="Blackjacks", value=str(wallet.get("blackjacks", 0)), inline=True)
     embed.add_field(name="Total wagered", value=format_amount(int(wallet.get("wagered", 0)), currency), inline=True)
     embed.add_field(name="Net result", value=format_amount(int(wallet.get("profit", 0)), currency), inline=True)
+    stats = wallet.get("game_stats") or {}
+    labels = {
+        "blackjack": "Blackjack",
+        "plinko": "Plinko",
+        "mines": "Mines",
+        "higher_lower": "Higher or Lower",
+        "slots": "Slots",
+        "roulette": "Roulette",
+    }
+    game_lines = []
+    for key, label in labels.items():
+        values = stats.get(key) or {}
+        played = int(values.get("played", 0))
+        if played:
+            game_lines.append(
+                f"**{label}:** {played:,} played • {int(values.get('wins', 0)):,}W / {int(values.get('losses', 0)):,}L • {format_amount(int(values.get('profit', 0)), currency)} net"
+            )
+    if game_lines:
+        embed.add_field(name="Game breakdown", value="\n".join(game_lines)[:1024], inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
