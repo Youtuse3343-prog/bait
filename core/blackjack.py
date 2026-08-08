@@ -262,6 +262,26 @@ class BlackjackView(discord.ui.View):
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
 
+    def strip_button_emojis(self) -> None:
+        """Remove decorative emojis so Discord can still render the controls."""
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.emoji = None
+
+    @staticmethod
+    def _is_invalid_component_emoji(exc: discord.HTTPException) -> bool:
+        return getattr(exc, "code", None) == 50035 and "emoji" in str(exc).lower()
+
+    async def open_table(self, interaction: discord.Interaction) -> None:
+        """Open the table, retrying without decorative emojis if Discord rejects one."""
+        try:
+            await interaction.edit_original_response(content=None, embed=self.build_embed(), view=self)
+        except discord.HTTPException as exc:
+            if not self._is_invalid_component_emoji(exc):
+                raise
+            self.strip_button_emojis()
+            await interaction.edit_original_response(content=None, embed=self.build_embed(), view=self)
+
     def build_embed(self, *, reveal_dealer: Optional[bool] = None, notice: str = "") -> discord.Embed:
         reveal = self.finished if reveal_dealer is None else reveal_dealer
         player_total, _ = hand_value(self.player)
@@ -341,10 +361,20 @@ class BlackjackView(discord.ui.View):
 
     async def _safe_edit(self, interaction: discord.Interaction, *, notice: str = "") -> None:
         embed = self.build_embed(notice=notice)
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=self)
-        else:
-            await interaction.response.edit_message(embed=embed, view=self)
+
+        async def apply_edit() -> None:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+
+        try:
+            await apply_edit()
+        except discord.HTTPException as exc:
+            if not self._is_invalid_component_emoji(exc):
+                raise
+            self.strip_button_emojis()
+            await apply_edit()
 
     @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary, emoji="🃏", custom_id="casino_blackjack_hit")
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -365,7 +395,7 @@ class BlackjackView(discord.ui.View):
             await self._stand_and_resolve()
             await self._safe_edit(interaction)
 
-    @discord.ui.button(label="Double", style=discord.ButtonStyle.success, emoji="×2", custom_id="casino_blackjack_double")
+    @discord.ui.button(label="Double", style=discord.ButtonStyle.success, emoji="⚡", custom_id="casino_blackjack_double")
     async def double(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
             if self.finished:

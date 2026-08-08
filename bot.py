@@ -26,7 +26,7 @@ from pymongo import ReturnDocument
 
 from core.blackjack import BlackjackView, CasinoStore, format_amount
 
-BUILD_VERSION = "3.0.0-production-casino"
+BUILD_VERSION = "3.0.1-production-casino"
 
 load_dotenv()
 
@@ -2187,7 +2187,7 @@ async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[in
             dealer_hits_soft_17=bool(config.get("blackjack_dealer_hits_soft_17")),
         )
         await view.resolve_initial()
-        await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
+        await view.open_table(interaction)
         view.message = await interaction.original_response()
         await save_event("casino_events", {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "event": "blackjack_started", "bet": int(bet)})
     except Exception as exc:
