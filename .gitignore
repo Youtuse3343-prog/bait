@@ -1,4 +1,12 @@
 .env
-bot_data.json
+.env.*
+!.env.example
+.venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.log
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+bot_data.json

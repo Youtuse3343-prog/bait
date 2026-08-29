@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
-BUILD_VERSION = "3.3.0-casino-link-only"
+BUILD_VERSION = "4.0.1-production-dashboard"
 
 load_dotenv()
 
@@ -42,7 +42,6 @@ OWNER_USER_ID = int(os.getenv("OWNER_USER_ID", "1222903158125105194"))
 OWNER_CONTACT = os.getenv("OWNER_CONTACT", "Contact moealturej, the owner, to talk about using this bot for your server.").strip()
 
 DEFAULT_STORE_URL = os.getenv("DEFAULT_STORE_URL", "https://www.moealturej.com").strip()
-CASINO_URL = "https://www.moealturej.com/casino"
 ROTATING_STATUSES = [
     s.strip() for s in os.getenv("ROTATING_STATUSES", "Watching /help,moealturej support,Watching tickets").split(",") if s.strip()
 ]
@@ -340,6 +339,67 @@ TICKET_TYPES = {
     },
 }
 
+COMMAND_CATALOG: Dict[str, Dict[str, str]] = {
+    "ping": {"group": "Essentials", "label": "Ping", "feature": "feature_utilities"},
+    "store": {"group": "Essentials", "label": "Store", "feature": "feature_utilities"},
+    "help": {"group": "Essentials", "label": "Help", "feature": "feature_utilities"},
+    "serverinfo": {"group": "Essentials", "label": "Server info", "feature": "feature_utilities"},
+    "userinfo": {"group": "Essentials", "label": "User info", "feature": "feature_utilities"},
+    "avatar": {"group": "Essentials", "label": "Avatar", "feature": "feature_utilities"},
+    "commands": {"group": "Administration", "label": "Admin command menu", "feature": "feature_admin_commands"},
+    "setup_enable": {"group": "Administration", "label": "Enable / disable bot", "feature": "feature_admin_commands"},
+    "set_admin_role": {"group": "Administration", "label": "Set admin role", "feature": "feature_admin_commands"},
+    "set_verified_role": {"group": "Verification", "label": "Set verified role", "feature": "feature_verification"},
+    "set_unverified_role": {"group": "Verification", "label": "Set unverified role", "feature": "feature_verification"},
+    "set_auto_role": {"group": "Welcome", "label": "Set auto role", "feature": "feature_welcome"},
+    "set_logs": {"group": "Administration", "label": "Set log channels", "feature": "feature_admin_commands"},
+    "send_verification_panel": {"group": "Verification", "label": "Send verification panel", "feature": "feature_verification"},
+    "set_ticket_category": {"group": "Tickets", "label": "Set ticket category", "feature": "feature_tickets"},
+    "set_ticket_role": {"group": "Tickets", "label": "Set ticket support role", "feature": "feature_tickets"},
+    "send_ticket_panel": {"group": "Tickets", "label": "Send ticket panel", "feature": "feature_tickets"},
+    "set_store": {"group": "Administration", "label": "Set store URL", "feature": "feature_admin_commands"},
+    "announce": {"group": "Content", "label": "Announcement", "feature": "feature_announcements"},
+    "stats_setup": {"group": "Statistics", "label": "Stats setup", "feature": "feature_stats"},
+    "config_show": {"group": "Administration", "label": "Show config", "feature": "feature_admin_commands"},
+    "setup_audit": {"group": "Administration", "label": "Setup audit", "feature": "feature_admin_commands"},
+    "purge": {"group": "Moderation", "label": "Purge messages", "feature": "feature_moderation"},
+    "timeout": {"group": "Moderation", "label": "Timeout", "feature": "feature_moderation"},
+    "untimeout": {"group": "Moderation", "label": "Remove timeout", "feature": "feature_moderation"},
+    "warn": {"group": "Moderation", "label": "Warn", "feature": "feature_moderation"},
+    "warnings": {"group": "Moderation", "label": "View warnings", "feature": "feature_moderation"},
+    "slowmode": {"group": "Moderation", "label": "Slowmode", "feature": "feature_moderation"},
+    "lock": {"group": "Moderation", "label": "Lock channel", "feature": "feature_moderation"},
+    "unlock": {"group": "Moderation", "label": "Unlock channel", "feature": "feature_moderation"},
+    "ticket_add": {"group": "Tickets", "label": "Add member to ticket", "feature": "feature_tickets"},
+    "ticket_rename": {"group": "Tickets", "label": "Rename ticket", "feature": "feature_tickets"},
+}
+DEFAULT_COMMAND_ENABLED: Dict[str, bool] = {name: True for name in COMMAND_CATALOG}
+
+DEFAULT_OWNER_SETTINGS: Dict[str, Any] = {
+    "key": "global",
+    "dashboard_title": "moealturej Bot Control",
+    "dashboard_subtitle": "Private operations dashboard",
+    "dashboard_notice": "",
+    "dashboard_accent": "A855F7",
+    "dashboard_logo_url": "",
+    "default_store_url": DEFAULT_STORE_URL,
+    "default_brand_name": "moealturej",
+    "default_brand_color": "A855F7",
+    "default_brand_footer": "moealturej • Professional server tools",
+    "default_brand_icon_url": "",
+    "presence_enabled": True,
+    "presence_type": "watching",
+    "presence_interval_seconds": 300,
+    "presence_statuses": list(ROTATING_STATUSES) or ["Watching /help", "moealturej support", "Watching tickets"],
+    "global_pause": False,
+    "global_pause_message": "Bot features are temporarily paused for maintenance.",
+    "owner_contact": OWNER_CONTACT,
+    "dm_sender_enabled": True,
+    "announcement_sender_enabled": True,
+    "stats_interval_minutes": STATS_UPDATE_MINUTES,
+    "max_purge_amount": MAX_PURGE_AMOUNT,
+}
+
 DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "enabled": False,
     "verified_role": None,
@@ -360,6 +420,10 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "announce_footer": "moealturej",
     "stats_category": None,
     "stats_channels": {"members": None, "humans": None, "bots": None, "boosts": None},
+    "stats_name_members": "👥 Members: {count}",
+    "stats_name_humans": "🧑 Humans: {count}",
+    "stats_name_bots": "🤖 Bots: {count}",
+    "stats_name_boosts": "🚀 Boosts: {count}",
     "open_tickets": {},
     "oauth_verify_join_enabled": True,
     "welcome_message": "Welcome {mention} to **{server}**. Please verify if required and open a ticket if you need support.",
@@ -392,6 +456,27 @@ DEFAULT_GUILD_CONFIG: Dict[str, Any] = {
     "ticket_description_hwid": "Request a hardware ID reset for a purchased key.",
     "ticket_label_key_not_received": "Key not received",
     "ticket_description_key_not_received": "Get help with a missing or delayed key delivery.",
+    # Feature gates and command customization
+    "feature_utilities": True,
+    "feature_admin_commands": True,
+    "feature_verification": True,
+    "feature_welcome": True,
+    "feature_tickets": True,
+    "feature_moderation": True,
+    "feature_stats": True,
+    "feature_announcements": True,
+    "feature_dms": True,
+    "command_enabled": dict(DEFAULT_COMMAND_ENABLED),
+    # Public command copy
+    "help_title": "Command Center",
+    "help_description": "Everything you need, organized in one place.",
+    "ping_title": "System Online",
+    "ping_description": "Discord latency: `{latency_ms}ms`",
+    "store_title": "moealturej Store",
+    "store_description": "Browse products, downloads, and account tools securely.",
+    "store_button_label": "Open Store",
+    "moderation_dm_warn": True,
+    "moderation_dm_timeout": True,
 }
 
 # =========================
@@ -412,6 +497,7 @@ commands_synced = False
 startup_blocked_until: Optional[datetime] = None
 last_startup_error: Optional[str] = None
 CONFIG_CACHE: dict[int, tuple[float, Dict[str, Any]]] = {}
+OWNER_SETTINGS_CACHE: Optional[tuple[float, Dict[str, Any]]] = None
 
 
 def utcnow() -> datetime:
@@ -440,6 +526,7 @@ async def init_mongo() -> None:
     await mdb.error_events.create_index([("created_at", -1)])
     await mdb.error_events.create_index([("guild_id", 1), ("created_at", -1)])
     await mdb.verified_members.create_index([("guild_id", 1), ("user_id", 1)], unique=True)
+    await mdb.owner_settings.create_index("key", unique=True)
 
 
 async def get_guild_config(guild_id: int) -> Dict[str, Any]:
@@ -450,22 +537,55 @@ async def get_guild_config(guild_id: int) -> Dict[str, Any]:
         return dict(cached[1])
     existing = await mdb.guild_configs.find_one({"guild_id": guild_id}, {"_id": 0})
     if not existing:
-        doc = {"guild_id": int(guild_id), **DEFAULT_GUILD_CONFIG, "created_at": now_iso(), "updated_at": now_iso()}
+        defaults = dict(DEFAULT_GUILD_CONFIG)
+        defaults["stats_channels"] = dict(DEFAULT_GUILD_CONFIG["stats_channels"])
+        defaults["command_enabled"] = dict(DEFAULT_COMMAND_ENABLED)
+        try:
+            owner_defaults = await get_owner_settings()
+            defaults.update({
+                "store_url": owner_defaults.get("default_store_url") or DEFAULT_STORE_URL,
+                "brand_name": owner_defaults.get("default_brand_name") or "moealturej",
+                "brand_color": owner_defaults.get("default_brand_color") or "A855F7",
+                "brand_footer": owner_defaults.get("default_brand_footer") or DEFAULT_GUILD_CONFIG["brand_footer"],
+                "brand_icon_url": owner_defaults.get("default_brand_icon_url") or "",
+            })
+        except Exception:
+            pass
+        doc = {"guild_id": int(guild_id), **defaults, "created_at": now_iso(), "updated_at": now_iso()}
         await mdb.guild_configs.insert_one(doc)
         clean = {k: v for k, v in doc.items() if k != "_id"}
         CONFIG_CACHE[guild_id] = (now, clean)
         return dict(clean)
 
     update: Dict[str, Any] = {}
+    unset: Dict[str, str] = {}
     for key, value in DEFAULT_GUILD_CONFIG.items():
         if key not in existing:
             update[key] = value
-    for key, value in DEFAULT_GUILD_CONFIG["stats_channels"].items():
-        if key not in existing.get("stats_channels", {}):
-            update[f"stats_channels.{key}"] = value
-    if update:
+    if "stats_channels" in existing:
+        for key, value in DEFAULT_GUILD_CONFIG["stats_channels"].items():
+            if key not in existing.get("stats_channels", {}):
+                update[f"stats_channels.{key}"] = value
+    if "command_enabled" in existing:
+        command_state = existing.get("command_enabled", {}) or {}
+        for key, value in DEFAULT_COMMAND_ENABLED.items():
+            if key not in command_state:
+                update[f"command_enabled.{key}"] = value
+        for key in command_state:
+            if key not in DEFAULT_COMMAND_ENABLED:
+                unset[f"command_enabled.{key}"] = ""
+
+    allowed_root_keys = set(DEFAULT_GUILD_CONFIG) | {"guild_id", "created_at", "updated_at"}
+    for key in existing:
+        if key not in allowed_root_keys:
+            unset[key] = ""
+
+    if update or unset:
         update["updated_at"] = now_iso()
-        await mdb.guild_configs.update_one({"guild_id": int(guild_id)}, {"$set": update})
+        operation: Dict[str, Any] = {"$set": update}
+        if unset:
+            operation["$unset"] = unset
+        await mdb.guild_configs.update_one({"guild_id": int(guild_id)}, operation)
         existing = await mdb.guild_configs.find_one({"guild_id": int(guild_id)}, {"_id": 0})
     CONFIG_CACHE[guild_id] = (now, existing)
     return dict(existing)
@@ -476,6 +596,65 @@ async def set_config(guild_id: int, updates: Dict[str, Any]) -> None:
     updates["updated_at"] = now_iso()
     await mdb.guild_configs.update_one({"guild_id": int(guild_id)}, {"$set": updates}, upsert=True)
     CONFIG_CACHE.pop(int(guild_id), None)
+
+
+async def get_owner_settings() -> Dict[str, Any]:
+    global OWNER_SETTINGS_CACHE
+    now = asyncio.get_running_loop().time()
+    if OWNER_SETTINGS_CACHE and now - OWNER_SETTINGS_CACHE[0] < CONFIG_CACHE_SECONDS:
+        return dict(OWNER_SETTINGS_CACHE[1])
+    existing = await mdb.owner_settings.find_one({"key": "global"}, {"_id": 0})
+    if not existing:
+        doc = dict(DEFAULT_OWNER_SETTINGS)
+        doc["presence_statuses"] = list(DEFAULT_OWNER_SETTINGS["presence_statuses"])
+        doc["updated_at"] = now_iso()
+        await mdb.owner_settings.insert_one(doc)
+        existing = {k: v for k, v in doc.items() if k != "_id"}
+    else:
+        missing = {k: v for k, v in DEFAULT_OWNER_SETTINGS.items() if k not in existing}
+        allowed_owner_keys = set(DEFAULT_OWNER_SETTINGS) | {"key", "created_at", "updated_at"}
+        stale = {k: "" for k in existing if k not in allowed_owner_keys}
+        if missing or stale:
+            missing["updated_at"] = now_iso()
+            operation: Dict[str, Any] = {"$set": missing}
+            if stale:
+                operation["$unset"] = stale
+            await mdb.owner_settings.update_one({"key": "global"}, operation)
+            existing = await mdb.owner_settings.find_one({"key": "global"}, {"_id": 0})
+    OWNER_SETTINGS_CACHE = (now, existing)
+    return dict(existing)
+
+
+async def set_owner_settings(updates: Dict[str, Any]) -> None:
+    global OWNER_SETTINGS_CACHE
+    updates = dict(updates)
+    updates["updated_at"] = now_iso()
+    await mdb.owner_settings.update_one({"key": "global"}, {"$set": updates, "$setOnInsert": {"key": "global"}}, upsert=True)
+    OWNER_SETTINGS_CACHE = None
+
+
+def command_feature_name(command_name: str) -> Optional[str]:
+    meta = COMMAND_CATALOG.get(command_name or "")
+    return meta.get("feature") if meta else None
+
+
+async def command_is_available(interaction: discord.Interaction, config: Dict[str, Any]) -> bool:
+    if is_owner_user(interaction.user.id):
+        return True
+    owner = await get_owner_settings()
+    if owner.get("global_pause"):
+        await safe_interaction_send(interaction, str(owner.get("global_pause_message") or "Bot features are temporarily paused."), ephemeral=True)
+        return False
+    command_name = getattr(getattr(interaction, "command", None), "name", "") or ""
+    feature = command_feature_name(command_name)
+    if feature and config.get(feature) is False:
+        await safe_interaction_send(interaction, "That module is disabled in this server.", ephemeral=True)
+        return False
+    enabled_map = config.get("command_enabled") or {}
+    if command_name and enabled_map.get(command_name, True) is False:
+        await safe_interaction_send(interaction, "That command is disabled in this server.", ephemeral=True)
+        return False
+    return True
 
 
 async def add_open_ticket(guild_id: int, user_id: int, channel_id: int, ticket_type: str) -> None:
@@ -625,7 +804,9 @@ def member_is_command_admin(member: discord.Member, config: Dict[str, Any]) -> b
 
 
 def owner_private_message() -> str:
-    return f"This bot is not for public use. {OWNER_CONTACT}"
+    cached_owner = OWNER_SETTINGS_CACHE[1] if OWNER_SETTINGS_CACHE else DEFAULT_OWNER_SETTINGS
+    contact = str(cached_owner.get("owner_contact") or OWNER_CONTACT).strip()[:300]
+    return f"This bot is not for public use. {contact}"
 
 
 def admin_only():
@@ -637,7 +818,7 @@ def admin_only():
         if not member_is_command_admin(interaction.user, config):
             await safe_interaction_send(interaction, owner_private_message(), ephemeral=True)
             return False
-        return True
+        return await command_is_available(interaction, config)
     return app_commands.check(predicate)
 
 
@@ -649,7 +830,7 @@ def guild_enabled_or_owner():
             return True
         config = await get_guild_config(interaction.guild.id)
         if config.get("enabled"):
-            return True
+            return await command_is_available(interaction, config)
         await safe_interaction_send(interaction, owner_private_message(), ephemeral=True)
         return False
     return app_commands.check(predicate)
@@ -659,6 +840,17 @@ def guild_enabled_or_owner():
 # =========================
 def make_embed(title: str, description: str, color: int = EMBED_COLOR) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=color, timestamp=utcnow())
+
+
+def is_http_url(value: Any) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    except Exception:
+        return False
 
 
 def parse_color_value(value: Any, fallback: int = EMBED_COLOR) -> int:
@@ -675,7 +867,7 @@ def make_branded_embed(config: Dict[str, Any], title: str, description: str, col
     embed = make_embed(title, description, color if color is not None else parse_color_value(config.get("brand_color")))
     footer = str(config.get("brand_footer") or config.get("brand_name") or "moealturej")[:2048]
     icon_url = str(config.get("brand_icon_url") or "").strip()
-    embed.set_footer(text=footer, icon_url=icon_url or None)
+    embed.set_footer(text=footer, icon_url=icon_url if is_http_url(icon_url) else None)
     return embed
 
 
@@ -693,6 +885,13 @@ def render_template(template: str, *, guild: discord.Guild, member: Optional[dis
     for key, value in values.items():
         rendered = rendered.replace("{" + key + "}", value)
     return rendered
+
+
+def render_stat_name(config: Dict[str, Any], key: str, count: int, guild: discord.Guild) -> str:
+    fallback = str(DEFAULT_GUILD_CONFIG.get(f"stats_name_{key}") or f"{key.title()}: {{count}}")
+    template = str(config.get(f"stats_name_{key}") or fallback)
+    value = template.replace("{count}", str(count)).replace("{server}", guild.name)
+    return value[:100] or fallback.replace("{count}", str(count))[:100]
 
 
 def ticket_type_info(config: Dict[str, Any], key: str) -> Dict[str, Any]:
@@ -781,32 +980,65 @@ async def log_verification(guild: discord.Guild, user: discord.abc.User, method:
 
 
 async def build_ticket_transcript(channel: discord.TextChannel) -> tuple[str, bytes]:
-    lines = [
-        "<!doctype html><html><head><meta charset='utf-8'>",
-        "<style>body{font-family:Arial;background:#0b0b10;color:#fff;padding:24px}.msg{border-bottom:1px solid #292938;padding:12px 0}.meta{color:#a8a8b8;font-size:13px}.content{white-space:pre-wrap;margin-top:6px}.att a{color:#c4b5fd}</style>",
-        f"<title>Transcript #{html.escape(channel.name)}</title></head><body>",
-        f"<h1>Transcript: #{html.escape(channel.name)}</h1>",
-    ]
+    """Render a portable, escaped ticket transcript using the dashboard visual language."""
+    config = await get_guild_config(channel.guild.id)
+    brand_name = html.escape(str(config.get("brand_name") or "moealturej")[:60])
+    accent = str(config.get("brand_color") or "A855F7").strip().lstrip("#")
+    if len(accent) not in {3, 6} or any(ch not in string.hexdigits for ch in accent):
+        accent = "A855F7"
+    messages: list[str] = []
+    message_count = 0
+    attachment_count = 0
     async for msg in channel.history(limit=None, oldest_first=True):
+        message_count += 1
         author = html.escape(str(msg.author))
+        display_name = html.escape(getattr(msg.author, "display_name", str(msg.author)))
         content = html.escape(msg.content or "")
         created = msg.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        lines.append("<div class='msg'>")
-        lines.append(f"<div class='meta'><strong>{author}</strong> • {created}</div>")
+        avatar = html.escape(str(getattr(getattr(msg.author, "display_avatar", None), "url", "")))
+        parts = ["<article class='message'>", "<div class='message-head'>"]
+        if avatar:
+            parts.append(f"<img class='avatar' src='{avatar}' alt=''>")
+        parts.append(f"<div><strong>{display_name}</strong><div class='meta'>{author} • {created}</div></div></div>")
         if content:
-            lines.append(f"<div class='content'>{content}</div>")
-        if msg.embeds:
-            for emb in msg.embeds:
-                title = html.escape(emb.title or "Embed")
-                desc = html.escape(emb.description or "")
-                lines.append(f"<div class='content'>[Embed] <strong>{title}</strong><br>{desc}</div>")
+            parts.append(f"<div class='content'>{content}</div>")
+        for emb in msg.embeds:
+            title = html.escape(emb.title or "Embed")
+            desc = html.escape(emb.description or "")
+            parts.append(f"<div class='embed'><b>{title}</b>{('<div>'+desc+'</div>') if desc else ''}</div>")
         if msg.attachments:
-            links = " ".join(f"<a href='{html.escape(a.url)}'>{html.escape(a.filename)}</a>" for a in msg.attachments)
-            lines.append(f"<div class='att'>Attachments: {links}</div>")
-        lines.append("</div>")
-    lines.append("</body></html>")
+            attachment_count += len(msg.attachments)
+            links = "".join(
+                f"<a class='attachment' href='{html.escape(a.url)}' rel='noreferrer noopener'>↗ {html.escape(a.filename)}</a>"
+                for a in msg.attachments
+            )
+            parts.append(f"<div class='attachments'>{links}</div>")
+        parts.append("</article>")
+        messages.append("".join(parts))
+
+    guild_name = html.escape(channel.guild.name)
+    channel_name = html.escape(channel.name)
+    generated = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    document = f"""<!doctype html>
+<html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Transcript #{channel_name}</title>
+<style>
+:root{{--bg:#050508;--panel:#0b0a10;--panel2:#111019;--line:#24212e;--soft:#aaa3b5;--text:#f7f4fb;--accent:#{accent};--accent2:#{accent}}}
+*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 50% -20%,rgba(168,85,247,.14),transparent 32%),var(--bg);color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+a{{color:var(--accent2)}}.wrap{{width:min(1040px,calc(100% - 32px));margin:0 auto;padding:34px 0 64px}}
+.top{{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:24px}}.brand{{font-weight:850;letter-spacing:-.02em}}.dot{{display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:999px;box-shadow:0 0 20px var(--accent);margin-right:8px}}
+.hero{{padding:28px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#0a0910,#100b17);margin-bottom:18px}}.eyebrow{{font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#c8b6d7}}h1{{font-size:clamp(30px,5vw,52px);line-height:1;margin:10px 0 12px;letter-spacing:-.05em}}.muted,.meta{{color:var(--soft)}}
+.stats{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:22px}}.stat{{padding:14px 16px;background:#0d0b13;border:1px solid var(--line);border-radius:14px}}.stat b{{display:block;font-size:18px;margin-top:3px}}
+.feed{{border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--panel)}}.message{{padding:18px 20px;border-bottom:1px solid var(--line)}}.message:last-child{{border-bottom:0}}.message-head{{display:flex;align-items:center;gap:11px}}.avatar{{width:38px;height:38px;border-radius:12px;object-fit:cover;background:#17131f}}.meta{{font-size:12px;margin-top:1px}}.content{{white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0 0 49px;color:#ebe7f0}}.embed{{margin:12px 0 0 49px;padding:12px 14px;border-left:3px solid var(--accent);background:var(--panel2);border-radius:0 12px 12px 0;white-space:pre-wrap}}.attachments{{margin:12px 0 0 49px;display:flex;flex-wrap:wrap;gap:8px}}.attachment{{text-decoration:none;padding:8px 10px;border:1px solid var(--line);background:#14111a;border-radius:10px}}
+.footer{{margin-top:18px;text-align:center;color:var(--soft);font-size:12px}}@media(max-width:640px){{.stats{{grid-template-columns:1fr}}.content,.embed,.attachments{{margin-left:0}}.top{{align-items:flex-start;flex-direction:column}}}}
+</style></head><body><main class='wrap'>
+<div class='top'><div class='brand'><span class='dot'></span>{brand_name} Support</div><div class='muted'>Read-only ticket archive</div></div>
+<section class='hero'><span class='eyebrow'>Support transcript</span><h1>#{channel_name}</h1><p class='muted'>A portable record from <strong>{guild_name}</strong>. Times are shown in UTC.</p><div class='stats'><div class='stat'><span class='muted'>Messages</span><b>{message_count}</b></div><div class='stat'><span class='muted'>Attachments</span><b>{attachment_count}</b></div><div class='stat'><span class='muted'>Generated</span><b style='font-size:13px'>{generated}</b></div></div></section>
+<section class='feed'>{''.join(messages) if messages else "<div class='message muted'>No messages were recorded in this ticket.</div>"}</section>
+<div class='footer'>Generated by {brand_name} Bot Control • Transcript content is escaped before rendering.</div>
+</main></body></html>"""
     filename = f"transcript-{channel.guild.id}-{channel.id}.html"
-    return filename, "\n".join(lines).encode("utf-8")
+    return filename, document.encode("utf-8")
 
 # =========================
 # VERIFICATION / TICKET VIEWS
@@ -854,6 +1086,8 @@ class OAuthVerifyView(discord.ui.View):
             return await safe_interaction_send(interaction, "Please wait a moment before requesting another verification link.", ephemeral=True)
 
         config = await get_guild_config(interaction.guild.id)
+        if config.get("feature_verification") is False and not is_owner_user(interaction.user.id):
+            return await safe_interaction_send(interaction, "Verification is currently disabled in this server.", ephemeral=True)
         verified_role_id = config.get("verified_role")
         verified_role = interaction.guild.get_role(int(verified_role_id or 0)) if verified_role_id else None
         if not verified_role:
@@ -883,6 +1117,8 @@ async def create_ticket(interaction: discord.Interaction, ticket_key: str, subje
     await safe_interaction_defer(interaction, ephemeral=True)
     async with _ticket_lock(interaction.guild.id, interaction.user.id):
         config = await get_guild_config(interaction.guild.id)
+        if config.get("feature_tickets") is False and not is_owner_user(interaction.user.id):
+            return await safe_interaction_send(interaction, "Support tickets are currently disabled in this server.", ephemeral=True)
         existing = config.get("open_tickets", {}).get(str(interaction.user.id))
         if existing:
             channel_id = existing.get("channel_id") if isinstance(existing, dict) else existing
@@ -1047,35 +1283,237 @@ class CloseTicketView(discord.ui.View):
 # WEB DASHBOARD
 # =========================
 def page(title: str, body: str) -> web.Response:
+    cached_owner = OWNER_SETTINGS_CACHE[1] if OWNER_SETTINGS_CACHE else DEFAULT_OWNER_SETTINGS
+    accent = str(cached_owner.get("dashboard_accent") or "A855F7").strip().lstrip("#")
+    if len(accent) not in {3, 6} or any(ch not in string.hexdigits for ch in accent):
+        accent = "A855F7"
+    logo_url = str(cached_owner.get("dashboard_logo_url") or "").strip()
+    if not is_http_url(logo_url):
+        logo_url = ""
+    dashboard_brand = str(cached_owner.get("default_brand_name") or "moealturej")[:60]
+    dashboard_title = str(cached_owner.get("dashboard_title") or f"{dashboard_brand} Bot Control")[:80]
+    website_url = str(cached_owner.get("default_store_url") or DEFAULT_STORE_URL)
+    if not is_http_url(website_url):
+        website_url = DEFAULT_STORE_URL
     css = """
     <style>
-    :root{color-scheme:dark;--bg:#030306;--bg2:#070711;--glass:rgba(12,12,22,.74);--glass2:rgba(255,255,255,.055);--panel:rgba(14,14,25,.82);--panel2:rgba(124,58,237,.14);--line:rgba(255,255,255,.12);--line2:rgba(192,132,252,.35);--text:#f8f7ff;--muted:rgba(248,247,255,.66);--soft:rgba(248,247,255,.84);--purple:#8b5cf6;--purple2:#c084fc;--pink:#ec4899;--blue:#38bdf8;--green:#22c55e;--danger:#fb7185;--shadow:0 30px 110px rgba(0,0,0,.42)}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:radial-gradient(circle at 18% -10%,rgba(139,92,246,.38),transparent 34rem),radial-gradient(circle at 92% 12%,rgba(236,72,153,.18),transparent 30rem),radial-gradient(circle at 55% 96%,rgba(56,189,248,.12),transparent 32rem),linear-gradient(180deg,#05050a,#020204 68%,#05050a);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent 82%);opacity:.55}body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 0,rgba(255,255,255,.08),transparent 38rem);mix-blend-mode:screen}a{color:#e9d5ff;text-decoration:none}.wrap{width:min(1220px,calc(100% - 30px));margin:auto;padding:28px 0 58px}.nav{position:sticky;top:14px;z-index:10;display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding:12px 14px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,rgba(8,8,15,.82),rgba(20,15,34,.68));backdrop-filter:blur(22px);box-shadow:0 22px 90px rgba(0,0,0,.36)}.brand{display:flex;align-items:center;gap:11px;font-weight:950;letter-spacing:-.05em}.brand:before{content:"✦";display:grid;place-items:center;width:38px;height:38px;border-radius:14px;background:linear-gradient(135deg,var(--purple),var(--pink) 55%,var(--blue));box-shadow:0 14px 50px rgba(139,92,246,.46)}.navlinks{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.navlinks a{padding:9px 12px;border-radius:14px;color:rgba(255,255,255,.74);font-weight:800;font-size:14px}.navlinks a:hover{background:rgba(255,255,255,.08);color:#fff}.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:34px;padding:38px;background:linear-gradient(145deg,rgba(139,92,246,.24),rgba(236,72,153,.08) 38%,rgba(56,189,248,.07) 62%,rgba(255,255,255,.04));box-shadow:var(--shadow)}.hero:before{content:"";position:absolute;inset:1px;border-radius:33px;border:1px solid rgba(255,255,255,.06);pointer-events:none}.hero:after{content:"";position:absolute;right:-100px;top:-120px;width:340px;height:340px;background:radial-gradient(circle,rgba(192,132,252,.38),transparent 68%);filter:blur(2px)}h1{font-size:clamp(34px,5.3vw,68px);letter-spacing:-.07em;line-height:.92;margin:0 0 13px;max-width:930px}h2{letter-spacing:-.04em;margin:0 0 12px;font-size:clamp(22px,2.4vw,31px)}h3{letter-spacing:-.03em;margin:0 0 10px;font-size:20px}.card,.guild,.panel{position:relative;border:1px solid var(--line);background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.04));border-radius:26px;padding:23px;box-shadow:0 24px 90px rgba(0,0,0,.29);backdrop-filter:blur(20px);overflow:hidden}.card:before,.guild:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.07),transparent 38%);pointer-events:none;opacity:.55}.guild{transition:transform .18s ease,border-color .18s ease,background .18s ease}.guild:hover{transform:translateY(-4px);border-color:var(--line2);background:linear-gradient(145deg,rgba(124,58,237,.2),rgba(255,255,255,.055))}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}.section-title{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 0 13px}.btn,button{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#a855f7 55%,#ec4899);color:white;padding:12px 17px;font-weight:950;cursor:pointer;box-shadow:0 17px 46px rgba(124,58,237,.29);transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.btn:hover,button:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 22px 58px rgba(124,58,237,.34)}.btn.secondary{background:rgba(255,255,255,.075);box-shadow:none;border:1px solid var(--line)}.muted{color:var(--muted);line-height:1.66}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(139,92,246,.14);color:#ede9fe;border:1px solid rgba(192,132,252,.28);font-size:13px;font-weight:900;box-shadow:inset 0 1px rgba(255,255,255,.08)}code{display:inline-block;max-width:100%;overflow:auto;padding:11px 13px;border-radius:15px;border:1px solid var(--line);background:rgba(0,0,0,.34);color:#ddd6fe}label{display:block;color:rgba(255,255,255,.84);font-size:13px;font-weight:900;letter-spacing:.01em}input,select,textarea{width:100%;margin:8px 0 16px;padding:14px 15px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:#10101b;color:#f8fafc;outline:none;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.018);font:inherit}input::placeholder,textarea::placeholder{color:rgba(255,255,255,.36)}input:focus,select:focus,textarea:focus{border-color:rgba(192,132,252,.75);box-shadow:0 0 0 4px rgba(124,58,237,.18)}textarea{min-height:145px;resize:vertical;line-height:1.55}select{appearance:none;background-color:#10101b;background-image:linear-gradient(45deg,transparent 50%,#c4b5fd 50%),linear-gradient(135deg,#c4b5fd 50%,transparent 50%);background-position:calc(100% - 19px) 52%,calc(100% - 12px) 52%;background-size:7px 7px,7px 7px;background-repeat:no-repeat;padding-right:42px}select option{background:#0d0d18;color:#f8fafc}select option:hover,select option:checked{background:#7c3aed;color:#fff}.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.form-section{margin-top:17px;padding-top:17px;border-top:1px solid var(--line)}.savebar{position:sticky;bottom:14px;display:flex;justify-content:flex-end;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(7,7,13,.8);backdrop-filter:blur(20px)}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.preview-shell{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(0,0,0,.28),rgba(255,255,255,.035));padding:16px}.preview-message{white-space:pre-wrap;color:#f8fafc;line-height:1.55;margin-bottom:12px;padding:13px 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.045)}.preview-box{border:1px solid var(--line);border-left:4px solid var(--purple);border-radius:18px;background:rgba(0,0,0,.24);padding:18px;margin-top:8px}.preview-title{font-weight:950;font-size:20px;letter-spacing:-.025em}.preview-desc{white-space:pre-wrap;color:rgba(255,255,255,.78);line-height:1.55;margin-top:8px}.preview-footer{color:rgba(255,255,255,.48);font-size:12px;margin-top:14px}.preview-img{max-width:100%;border-radius:16px;margin-top:14px;border:1px solid var(--line)}.preview-thumb{float:right;width:88px;height:88px;object-fit:cover;border-radius:16px;margin-left:14px;margin-bottom:10px;border:1px solid var(--line)}.tiny{font-size:12px;color:rgba(255,255,255,.48)}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px}.stat{padding:18px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.045)}.stat b{display:block;font-size:27px;letter-spacing:-.04em}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:20px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:13px 15px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}th{color:#ddd6fe;background:rgba(124,58,237,.12)}td{color:var(--soft)}@media(max-width:760px){.row{grid-template-columns:1fr}.nav{position:relative;top:0;align-items:flex-start;gap:12px;flex-direction:column}.hero{padding:25px}.grid{grid-template-columns:1fr}h1{font-size:39px}}
-
-    .compact-hero{padding:30px}.compact-hero h1{font-size:clamp(36px,5vw,58px)}.notice{margin:16px 0;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--soft)}.notice.success{border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.10)}.notice.warning{border-color:rgba(245,158,11,.38);background:rgba(245,158,11,.10)}.dashboard-actions{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 22px}.settings-form{display:grid;gap:13px}.settings-form details{border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,var(--panel),rgba(255,255,255,.035));box-shadow:0 18px 60px rgba(0,0,0,.22);overflow:hidden}.settings-form summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:18px;padding:20px 22px;font-size:18px;font-weight:900}.settings-form summary::-webkit-details-marker{display:none}.settings-form summary span{display:flex;align-items:center;gap:12px}.settings-form summary b{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:rgba(139,92,246,.18);color:#ddd6fe;font-size:12px}.settings-form summary small{color:var(--muted);font-weight:700}.settings-form details[open] summary{border-bottom:1px solid var(--line)}.details-body{padding:22px}.ticket-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.subcard{padding:17px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.035)}.checkline{display:flex;align-items:center;gap:10px;padding:12px 0}.checkline input{width:auto;margin:0}.settings-form .savebar{align-items:center;justify-content:space-between}.settings-form small{display:block;color:var(--muted);font-weight:600;line-height:1.5}@media(max-width:900px){.ticket-grid{grid-template-columns:1fr}.settings-form summary{align-items:flex-start;flex-direction:column}.settings-form .savebar{align-items:stretch;flex-direction:column}}
+    :root{color-scheme:dark;--bg:#050507;--bg-soft:#09090d;--panel:#0d0d12;--panel2:#111118;--raised:#15151d;--line:#24242d;--line-soft:#191920;--text:#f7f4fb;--soft:#d9d3df;--muted:#8f8799;--purple:#a855f7;--purple2:#c261ff;--purple-dim:rgba(168,85,247,.13);--green:#35d99a;--yellow:#f7c65c;--red:#fb7185;--blue:#60a5fa;--shadow:0 24px 70px rgba(0,0,0,.38)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}body:before{content:"";position:fixed;z-index:100;top:0;right:0;width:3px;height:100vh;background:linear-gradient(180deg,var(--purple2),#7c3aed 50%,transparent);pointer-events:none}a{color:inherit;text-decoration:none}.shell{width:min(1260px,calc(100% - 36px));margin:0 auto}.topbar-wrap{position:sticky;top:0;z-index:50;background:rgba(5,5,7,.91);backdrop-filter:blur(18px);border-bottom:1px solid #17171d}.topbar{height:76px;display:flex;align-items:center;justify-content:space-between;gap:22px}.brand{display:flex;align-items:center;gap:11px;font-size:15px;font-weight:900;letter-spacing:-.03em;white-space:nowrap}.brandmark{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:radial-gradient(circle at 35% 25%,#d486ff,#8b2de2 48%,#250443 100%);border:1px solid #5f228d;box-shadow:inset 0 0 18px rgba(255,255,255,.11),0 0 24px rgba(168,85,247,.13);font-size:16px}.brand small{color:var(--muted);font-size:10px;letter-spacing:.12em;text-transform:uppercase}.navlinks{display:flex;align-items:center;gap:4px;background:#0b0b10;border:1px solid #16161d;padding:5px;border-radius:13px}.navlinks a{padding:9px 13px;color:#98919f;font-size:13px;font-weight:800;border-radius:9px;transition:.16s ease}.navlinks a:hover{color:#fff;background:#14141b}.navlinks a[href='/owner']{color:#d8b4fe}.top-actions{display:flex;align-items:center;gap:8px}.iconbtn,.adminbtn{min-height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #22222a;background:#101015;border-radius:10px;padding:0 12px;color:#d9d3df;font-size:12px;font-weight:850}.adminbtn{background:#f5f3f7;color:#08080a;border-color:#fff}.content{padding:26px 0 64px}.hero{position:relative;border:1px solid var(--line);background:linear-gradient(135deg,#09090e,#0d0a12 62%,#130a1c);border-radius:22px;padding:36px;overflow:hidden;box-shadow:var(--shadow)}.hero:after{content:"";position:absolute;right:-100px;top:-140px;width:380px;height:380px;border-radius:50%;background:radial-gradient(circle,rgba(168,85,247,.20),transparent 65%);pointer-events:none}.compact-hero{padding:30px}.eyebrow,.pill{display:inline-flex;align-items:center;gap:8px;color:#c8a7df;font-size:10px;text-transform:uppercase;letter-spacing:.15em;font-weight:900}.eyebrow:before,.pill:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--purple2);box-shadow:0 0 16px var(--purple)}h1{font-size:clamp(36px,5vw,62px);line-height:.98;letter-spacing:-.065em;margin:15px 0 14px;max-width:850px}h2{font-size:28px;letter-spacing:-.045em;margin:0}h3{font-size:18px;letter-spacing:-.03em;margin:0 0 8px}.muted{color:var(--muted);line-height:1.65}.soft{color:var(--soft)}.hero .muted{max-width:760px;font-size:15px}.hero-split{display:grid;grid-template-columns:1.55fr .9fr;padding:0}.hero-main{padding:56px 58px}.hero-side{padding:24px 28px;border-left:1px solid var(--line);background:rgba(255,255,255,.015);display:flex;flex-direction:column;justify-content:center}.hero-side h4{margin:0 0 8px;color:#8f8799;font-size:10px;letter-spacing:.14em;text-transform:uppercase}.feature-row{display:grid;grid-template-columns:34px 1fr;gap:13px;padding:16px 0;border-top:1px solid var(--line-soft)}.feature-row:first-of-type{border-top:0}.feature-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--purple-dim);color:#c06bff;font-weight:900}.feature-row b{font-size:13px}.feature-row span{display:block;margin-top:3px;color:#7e7687;font-size:11px;line-height:1.45}.toolbar,.dashboard-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}.btn,button{appearance:none;border:1px solid transparent;background:#f6f4f7;color:#070709;border-radius:11px;min-height:42px;padding:0 16px;font:inherit;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:.15s ease}.btn:hover,button:hover{transform:translateY(-1px);filter:brightness(1.04)}.btn.primary,button.primary{background:linear-gradient(135deg,#9d41ea,#b653ff);color:white;border-color:#bd72ff}.btn.secondary{background:#111117;color:#ddd7e3;border-color:#282830}.btn.ghost{background:transparent;color:#bdb4c4;border-color:#22222a}.btn.danger{background:#241115;color:#ff9aaa;border-color:#4d1f29}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:34px 0 14px}.section-title small{color:#817988;font-size:11px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:14px}.card,.guild,.panel,.subcard{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:20px;box-shadow:0 12px 38px rgba(0,0,0,.18)}.guild{transition:.15s ease}.guild:hover{border-color:#4f2d67;background:#100d14;transform:translateY(-2px)}.guild-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}.guild-icon{width:43px;height:43px;border-radius:12px;object-fit:cover;border:1px solid #2c2c35;background:#16161e}.guild-icon.fallback{display:grid;place-items:center;color:#c56eff;font-weight:950}.guild-meta{min-width:0}.guild-meta h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.guild-meta span{font-size:11px;color:#77707f}.card-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:20px}.stat{border:1px solid var(--line);border-radius:13px;background:#0a0a0f;padding:15px}.stat span{display:block;color:#77707f;font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:850}.stat b{display:block;margin-top:5px;font-size:23px;letter-spacing:-.04em}.status-dot{display:inline-block;width:7px;height:7px;border-radius:99px;background:var(--green);box-shadow:0 0 12px rgba(53,217,154,.4);margin-right:6px}.notice{margin:14px 0;padding:13px 15px;border-radius:12px;border:1px solid var(--line);background:#0d0d12;color:#bbb2c2;font-size:12px}.notice.success{border-color:#1f503f;background:#0c1713;color:#9ee9cc}.notice.warning{border-color:#5c4925;background:#17130c;color:#efd08b}.notice.danger{border-color:#5e2933;background:#190d10;color:#ffb0bd}.settings-form{display:grid;gap:11px}.settings-form details{border:1px solid var(--line);border-radius:15px;background:var(--panel);overflow:hidden}.settings-form summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:20px;padding:18px 20px;font-weight:900}.settings-form summary::-webkit-details-marker{display:none}.settings-form summary span{display:flex;align-items:center;gap:12px}.settings-form summary b{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--purple-dim);color:#c16cff;font-size:10px}.settings-form summary small{color:#746d7b;font-size:11px;font-weight:700}.settings-form details[open] summary{border-bottom:1px solid var(--line)}.details-body{padding:20px}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.ticket-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}.subcard{background:#0b0b10;padding:16px}.subcard h3{font-size:15px}label{display:block;color:#bcb4c2;font-size:11px;font-weight:850}input,select,textarea{width:100%;border:1px solid #292932;background:#0a0a0f;color:#f1edf5;border-radius:10px;padding:12px 13px;margin:7px 0 14px;outline:none;font:inherit;font-size:12px;transition:.15s ease}input:focus,select:focus,textarea:focus{border-color:#8542af;box-shadow:0 0 0 3px rgba(168,85,247,.10)}input::placeholder,textarea::placeholder{color:#5d5763}textarea{min-height:120px;resize:vertical;line-height:1.55}select{cursor:pointer}small{color:#756e7d}.savebar{position:sticky;bottom:14px;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #30303a;background:rgba(10,10,14,.92);backdrop-filter:blur(14px);border-radius:14px;padding:11px 12px;box-shadow:0 18px 50px rgba(0,0,0,.35)}.savebar .muted{font-size:11px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:13px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-soft);font-size:11px}th{background:#0b0b10;color:#a89fb0;text-transform:uppercase;letter-spacing:.08em}td{color:#c9c1cf}.preview-shell{border:1px solid var(--line);border-radius:14px;background:#08080c;padding:15px}.preview-message{white-space:pre-wrap;padding:12px;border:1px solid var(--line);border-radius:10px;color:#d9d2df}.preview-box{margin-top:10px;border:1px solid var(--line);border-left:4px solid var(--purple);border-radius:10px;background:#101016;padding:15px}.preview-title{font-weight:900}.preview-desc{white-space:pre-wrap;color:#bbb3c2;line-height:1.55;margin-top:6px}.preview-footer{color:#6f6876;font-size:10px;margin-top:12px}.preview-img{max-width:100%;border-radius:9px;margin-top:12px}.preview-thumb{float:right;width:74px;height:74px;object-fit:cover;border-radius:9px;margin-left:12px}.tiny{font-size:10px;color:#726b79}.command-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:11px}.command-card{border:1px solid var(--line);border-radius:13px;background:#0a0a0f;padding:15px}.command-card h3{font-size:14px}.command-card .rowline{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px}.command-card select{width:116px;margin:0}.module-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}.module{border:1px solid var(--line);background:#0a0a0f;border-radius:12px;padding:13px}.module b{font-size:12px}.module select{margin:9px 0 0}.footer{border-top:1px solid #15151b;padding:22px 0 36px;color:#625c68;font-size:10px;display:flex;justify-content:space-between;gap:12px}.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#15151d;border:1px solid #2b2b34;border-radius:6px;padding:3px 6px;color:#c9c0d0}.empty{padding:34px;text-align:center;border:1px dashed #292932;border-radius:15px;color:#77707f}
+    @media(max-width:900px){.navlinks{display:none}.hero-split{grid-template-columns:1fr}.hero-side{border-left:0;border-top:1px solid var(--line)}.hero-main{padding:38px 30px}.row,.ticket-grid{grid-template-columns:1fr}.top-actions .iconbtn{display:none}}
+    @media(max-width:620px){.shell{width:min(100% - 22px,1260px)}.topbar{height:66px}.brand small{display:none}.content{padding-top:14px}.hero,.compact-hero{padding:23px}.hero-main{padding:30px 23px}.hero-side{padding:20px 23px}h1{font-size:40px}.section-title{align-items:flex-start;flex-direction:column}.savebar{align-items:stretch;flex-direction:column}.btn,button{width:100%}.toolbar .btn,.dashboard-actions .btn{width:auto}.footer{flex-direction:column}}
     </style>
     """
-    html_doc = f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{html.escape(title)}</title>{css}</head><body><main class='wrap'><nav class='nav'><div class='brand'>moealturej bot</div><div class='navlinks'><a href='/'>Dashboard</a><a href='/health'>Health</a><a href='/logout'>Logout</a></div></nav>{body}</main></body></html>"
+    css = css.replace("--purple:#a855f7", f"--purple:#{accent}")
+    brand_mark = f"<img class='brandmark' src='{html.escape(logo_url)}' alt=''>" if logo_url else "<span class='brandmark'>M</span>"
+    script = """
+    <script>
+    (function(){
+      function cookie(name){return document.cookie.split('; ').find(v=>v.startsWith(name+'='))?.split('=').slice(1).join('=')||''}
+      document.addEventListener('DOMContentLoaded',()=>{
+        const token=decodeURIComponent(cookie('moe_csrf')||'');
+        if(token){document.querySelectorAll("form[method='post'],form[method='POST']").forEach(form=>{if(!form.querySelector("input[name='_csrf']")){const i=document.createElement('input');i.type='hidden';i.name='_csrf';i.value=token;form.appendChild(i)}})}
+      });
+    })();
+    </script>
+    """
+    html_doc = f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='theme-color' content='#050507'><title>{html.escape(title)} • {html.escape(dashboard_brand)}</title>{css}</head><body><div class='topbar-wrap'><div class='shell topbar'><a class='brand' href='/'>{brand_mark}<span>{html.escape(dashboard_brand)} <small>bot control</small></span></a><nav class='navlinks'><a href='/'>Dashboard</a><a href='/owner'>Owner</a><a href='/status'>Status</a><a href='{html.escape(website_url)}' target='_blank' rel='noopener'>Website</a></nav><div class='top-actions'><span class='iconbtn'><span class='status-dot'></span>{html.escape(BUILD_VERSION)}</span><a class='adminbtn' href='/logout'>Sign out</a></div></div></div><main class='shell content'>{body}</main><footer class='shell footer'><span>{html.escape(dashboard_title)} • production operations</span><span>Private dashboard • Discord OAuth protected</span></footer>{script}</body></html>"""
     return web.Response(text=html_doc, content_type="text/html")
 
 async def home(request: web.Request) -> web.Response:
     user = await get_dashboard_user(request)
+    owner_settings = await get_owner_settings()
     if not user:
-        body = f"<section class='hero'><span class='pill'>🔒 Private control panel</span><h1>Private Discord bot dashboard</h1><p class='muted'>Login with Discord to manage approved servers, verification, tickets, transcripts, logs, and live stats.</p><a class='btn' href='/login'>Login with Discord</a><p class='muted'>{html.escape(OWNER_CONTACT)}</p></section>"
-        return page("Dashboard", body)
+        body = f"""
+        <section class='hero hero-split'>
+          <div class='hero-main'><span class='eyebrow'>Private Discord operations</span><h1>moealturej<br><span style='color:#ad57ed'>Bot Control.</span></h1><p class='muted'>Manage verification, support, moderation, server automation, announcements, embeds, logs, and command behavior from one production dashboard.</p><div class='toolbar'><a class='btn' href='/login'>Login with Discord →</a><a class='btn secondary' href='{html.escape(str(owner_settings.get('default_store_url') or DEFAULT_STORE_URL))}' target='_blank' rel='noopener'>Open website</a></div></div>
+          <aside class='hero-side'><h4>Everything in one place</h4><div class='feature-row'><span class='feature-icon'>⚙</span><div><b>Full control</b><span>Every server module and command can be managed without editing code.</span></div></div><div class='feature-row'><span class='feature-icon'>◆</span><div><b>Production safety</b><span>OAuth sessions, rate-limit protection, audit logs, security headers, and incident references.</span></div></div><div class='feature-row'><span class='feature-icon'>↗</span><div><b>Direct operations</b><span>Send announcements, custom embeds, private DMs, and inspect recent activity.</span></div></div></aside>
+        </section>"""
+        return page("Bot Control", body)
     if DASHBOARD_OWNER_ONLY and not is_owner_user(int(user["user_id"])):
-        return page("Not public", f"<section class='card'><h1>Not available publicly</h1><p class='muted'>{html.escape(owner_private_message())}</p></section>")
+        return page("Private dashboard", f"<section class='hero compact-hero'><span class='eyebrow'>Restricted</span><h1>Owner access only.</h1><p class='muted'>{html.escape(str(owner_settings.get('owner_contact') or OWNER_CONTACT))}</p></section>")
 
-    guilds = user.get("guilds", [])
+    manageable = []
+    for guild in bot.guilds:
+        if await dashboard_can_access(user, guild.id):
+            manageable.append(guild)
+    total_members = sum(g.member_count or len(g.members) for g in manageable)
+    configs = {}
+    open_tickets = 0
+    for guild in manageable:
+        cfg = await get_guild_config(guild.id)
+        configs[guild.id] = cfg
+        open_tickets += len(cfg.get("open_tickets", {}))
+    notice = str(owner_settings.get("dashboard_notice") or "").strip()
+    notice_html = f"<div class='notice'>{html.escape(notice)}</div>" if notice else ""
     cards = []
-    bot_guild_ids = {g.id for g in bot.guilds}
-    for g in guilds:
-        if int(g["id"]) in bot_guild_ids and guild_manageable(g):
-            icon = "🟢" if int(g["id"]) in bot_guild_ids else "⚪"
-            cards.append(f"<div class='guild'><span class='pill'>{icon} Connected</span><h3>{html.escape(g['name'])}</h3><p class='muted'>Server ID: {g['id']}</p><a class='btn' href='/guild/{g['id']}'>Manage server</a></div>")
-    body = f"<section class='hero compact-hero'><span class='pill'>Authenticated dashboard</span><h1>Welcome, {html.escape(user.get('username','admin'))}</h1><p class='muted'>Manage connected servers you are authorized to configure.</p></section><div class='section-title'><h2>Your servers</h2><span class='muted'>MongoDB synced</span></div><div class='grid'>{''.join(cards) or '<div class=card>No manageable bot servers found.</div>'}</div>"
+    for guild in manageable:
+        cfg = configs[guild.id]
+        icon = f"<img class='guild-icon' src='{html.escape(str(guild.icon.url))}' alt=''>" if guild.icon else f"<span class='guild-icon fallback'>{html.escape(guild.name[:1].upper())}</span>"
+        state = "Live" if cfg.get("enabled") else "Owner only"
+        ticket_count = len(cfg.get("open_tickets", {}))
+        cards.append(f"""<section class='guild'><div class='guild-head'>{icon}<div class='guild-meta'><h3>{html.escape(guild.name)}</h3><span>{guild.id}</span></div></div><div class='card-row'><span class='pill'>{html.escape(state)}</span><span class='muted' style='font-size:11px'>{ticket_count} open ticket{'s' if ticket_count != 1 else ''}</span></div><div class='toolbar'><a class='btn primary' href='/guild/{guild.id}'>Manage</a><a class='btn secondary' href='/guild/{guild.id}/commands'>Commands</a><a class='btn ghost' href='/guild/{guild.id}/activity'>Activity</a></div></section>""")
+    body = f"""
+    <section class='hero compact-hero'><span class='eyebrow'>Authenticated control center</span><h1>{html.escape(str(owner_settings.get('dashboard_title') or 'moealturej Bot Control'))}</h1><p class='muted'>{html.escape(str(owner_settings.get('dashboard_subtitle') or 'Private operations dashboard'))} • Signed in as <strong class='soft'>{html.escape(user.get('username','admin'))}</strong>.</p><div class='stats'><div class='stat'><span>Connected servers</span><b>{len(manageable)}</b></div><div class='stat'><span>Total members</span><b>{total_members:,}</b></div><div class='stat'><span>Open tickets</span><b>{open_tickets}</b></div><div class='stat'><span>Discord latency</span><b>{round(bot.latency*1000) if bot.latency else '—'}<small> ms</small></b></div></div></section>
+    {notice_html}
+    <div class='section-title'><div><span class='eyebrow'>Servers</span><h2 style='margin-top:8px'>Manage your bot.</h2></div><div class='toolbar' style='margin:0'><a class='btn secondary' href='/owner'>Owner settings</a></div></div>
+    <div class='grid'>{''.join(cards) if cards else "<div class='empty'>No manageable bot servers found.</div>"}</div>"""
     return page("Dashboard", body)
 
+
+async def owner_page(request: web.Request) -> web.Response:
+    user = await get_dashboard_user(request)
+    if not user or not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text=owner_private_message())
+    settings = await get_owner_settings()
+    saved = "<div class='notice success'>Owner settings saved. Runtime caches were refreshed.</div>" if request.query.get("saved") else ""
+    statuses = "\n".join(str(x) for x in settings.get("presence_statuses", []))
+    def sel(value, expected):
+        return "selected" if str(value) == str(expected) else ""
+    guild_cards = []
+    for guild in bot.guilds:
+        cfg = await get_guild_config(guild.id)
+        guild_cards.append(f"<section class='guild'><h3>{html.escape(guild.name)}</h3><p class='muted'>{guild.member_count or len(guild.members):,} members • {'enabled' if cfg.get('enabled') else 'owner only'}</p><div class='toolbar'><a class='btn secondary' href='/guild/{guild.id}'>Settings</a><a class='btn ghost' href='/guild/{guild.id}/commands'>Commands</a></div></section>")
+    body = f"""
+    <section class='hero compact-hero'><span class='eyebrow'>Owner account</span><h1>Global bot controls.</h1><p class='muted'>These settings control bot-wide branding, presence, maintenance state, and dashboard behavior. Server-specific settings remain isolated per guild.</p><div class='stats'><div class='stat'><span>Guilds</span><b>{len(bot.guilds)}</b></div><div class='stat'><span>Build</span><b style='font-size:17px'>{html.escape(BUILD_VERSION)}</b></div><div class='stat'><span>Global pause</span><b style='font-size:17px'>{'ON' if settings.get('global_pause') else 'OFF'}</b></div></div></section>{saved}
+    <div class='section-title'><div><span class='eyebrow'>Global configuration</span><h2 style='margin-top:8px'>Owner settings</h2></div></div>
+    <form class='settings-form' method='post'>
+      <details open><summary><span><b>01</b> Dashboard identity</span><small>Theme copy and owner-facing presentation</small></summary><div class='details-body'><div class='row'><label>Dashboard title<input name='dashboard_title' maxlength='80' value='{html.escape(str(settings.get('dashboard_title') or ''))}'></label><label>Dashboard subtitle<input name='dashboard_subtitle' maxlength='140' value='{html.escape(str(settings.get('dashboard_subtitle') or ''))}'></label></div><label>Dashboard notice<input name='dashboard_notice' maxlength='300' value='{html.escape(str(settings.get('dashboard_notice') or ''))}' placeholder='Optional notice shown on the dashboard'></label><div class='row'><label>Accent color<input name='dashboard_accent' maxlength='7' value='#{html.escape(str(settings.get('dashboard_accent') or 'A855F7').lstrip('#'))}'></label><label>Dashboard logo URL<input name='dashboard_logo_url' value='{html.escape(str(settings.get('dashboard_logo_url') or ''))}' placeholder='Optional HTTPS image URL'></label></div></div></details>
+      <details open><summary><span><b>02</b> Global links & defaults</span><small>Applied to global commands and new configuration</small></summary><div class='details-body'><label>Default store URL<input name='default_store_url' value='{html.escape(str(settings.get('default_store_url') or DEFAULT_STORE_URL))}'></label><div class='row'><label>Default brand name<input name='default_brand_name' maxlength='60' value='{html.escape(str(settings.get('default_brand_name') or 'moealturej'))}'></label><label>Default brand color<input name='default_brand_color' maxlength='7' value='#{html.escape(str(settings.get('default_brand_color') or 'A855F7').lstrip('#'))}'></label></div><label>Default embed footer<input name='default_brand_footer' maxlength='150' value='{html.escape(str(settings.get('default_brand_footer') or ''))}'></label><label>Default brand icon URL<input name='default_brand_icon_url' value='{html.escape(str(settings.get('default_brand_icon_url') or ''))}'></label></div></details>
+      <details open><summary><span><b>03</b> Presence & runtime</span><small>Discord presence rotation and maintenance behavior</small></summary><div class='details-body'><div class='row'><label>Presence rotation<select name='presence_enabled'><option value='true' {sel(bool(settings.get('presence_enabled')), True)}>Enabled</option><option value='false' {sel(bool(settings.get('presence_enabled')), False)}>Disabled</option></select></label><label>Presence type<select name='presence_type'><option value='watching' {sel(settings.get('presence_type'),'watching')}>Watching</option><option value='playing' {sel(settings.get('presence_type'),'playing')}>Playing</option><option value='listening' {sel(settings.get('presence_type'),'listening')}>Listening</option><option value='competing' {sel(settings.get('presence_type'),'competing')}>Competing</option></select></label></div><div class='row'><label>Presence rotation interval (seconds)<input type='number' min='60' max='3600' name='presence_interval_seconds' value='{int(settings.get('presence_interval_seconds') or 300)}'></label><label>Live stats refresh (minutes)<input type='number' min='5' max='360' name='stats_interval_minutes' value='{int(settings.get('stats_interval_minutes') or STATS_UPDATE_MINUTES)}'></label></div><label>Presence statuses — one per line<textarea name='presence_statuses' maxlength='3000'>{html.escape(statuses)}</textarea></label><div class='row'><label>Global maintenance pause<select name='global_pause'><option value='false' {sel(bool(settings.get('global_pause')), False)}>Off</option><option value='true' {sel(bool(settings.get('global_pause')), True)}>On — owner bypass only</option></select></label><label>Owner contact text<input name='owner_contact' maxlength='300' value='{html.escape(str(settings.get('owner_contact') or OWNER_CONTACT))}'></label></div><label>Maintenance message<input name='global_pause_message' maxlength='300' value='{html.escape(str(settings.get('global_pause_message') or ''))}'></label></div></details>
+      <details><summary><span><b>04</b> Dashboard tools</span><small>Globally allow or suspend high-impact senders</small></summary><div class='details-body'><div class='row'><label>Private DM sender<select name='dm_sender_enabled'><option value='true' {sel(bool(settings.get('dm_sender_enabled')), True)}>Enabled</option><option value='false' {sel(bool(settings.get('dm_sender_enabled')), False)}>Disabled</option></select></label><label>Announcement / embed sender<select name='announcement_sender_enabled'><option value='true' {sel(bool(settings.get('announcement_sender_enabled')), True)}>Enabled</option><option value='false' {sel(bool(settings.get('announcement_sender_enabled')), False)}>Disabled</option></select></label></div><label>Maximum messages per /purge<input type='number' min='1' max='100' name='max_purge_amount' value='{int(settings.get('max_purge_amount') or MAX_PURGE_AMOUNT)}'></label></div></details>
+      <div class='savebar'><span class='muted'>Owner changes take effect immediately; presence interval updates on save.</span><button class='primary' type='submit'>Save owner settings</button></div>
+    </form>
+    <div class='section-title'><div><span class='eyebrow'>Connected servers</span><h2 style='margin-top:8px'>Quick access</h2></div></div><div class='grid'>{''.join(guild_cards) if guild_cards else "<div class='empty'>No connected servers.</div>"}</div>"""
+    return page("Owner Settings", body)
+
+
+async def owner_save(request: web.Request) -> web.Response:
+    user = await get_dashboard_user(request)
+    if not user or not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text=owner_private_message())
+    data = await request.post()
+    def text(name: str, default: str = "", limit: int = 500) -> str:
+        return str(data.get(name) or default).strip()[:limit]
+    def as_bool(name: str) -> bool:
+        return str(data.get(name, "false")).lower() == "true"
+    def safe_url(name: str, fallback: str) -> str:
+        value = text(name, fallback, 500)
+        return value if is_http_url(value) else fallback
+    def optional_url(name: str) -> str:
+        value = text(name, "", 500)
+        return value if is_http_url(value) else ""
+    def color(name: str, fallback: str) -> str:
+        value = text(name, fallback, 7).lstrip("#").upper()
+        return value if len(value) in {3, 6} and all(ch in string.hexdigits for ch in value) else fallback
+    try:
+        interval = max(60, min(3600, int(data.get("presence_interval_seconds") or 300)))
+    except (TypeError, ValueError):
+        interval = 300
+    try:
+        stats_interval = max(5, min(360, int(data.get("stats_interval_minutes") or STATS_UPDATE_MINUTES)))
+    except (TypeError, ValueError):
+        stats_interval = STATS_UPDATE_MINUTES
+    try:
+        max_purge = max(1, min(100, int(data.get("max_purge_amount") or MAX_PURGE_AMOUNT)))
+    except (TypeError, ValueError):
+        max_purge = MAX_PURGE_AMOUNT
+    statuses = [line.strip()[:120] for line in text("presence_statuses", "", 3000).splitlines() if line.strip()][:20]
+    updates = {
+        "dashboard_title": text("dashboard_title", "moealturej Bot Control", 80),
+        "dashboard_subtitle": text("dashboard_subtitle", "Private operations dashboard", 140),
+        "dashboard_notice": text("dashboard_notice", "", 300),
+        "dashboard_accent": color("dashboard_accent", "A855F7"),
+        "dashboard_logo_url": optional_url("dashboard_logo_url"),
+        "default_store_url": safe_url("default_store_url", DEFAULT_STORE_URL),
+        "default_brand_name": text("default_brand_name", "moealturej", 60),
+        "default_brand_color": color("default_brand_color", "A855F7"),
+        "default_brand_footer": text("default_brand_footer", "moealturej • Professional server tools", 150),
+        "default_brand_icon_url": optional_url("default_brand_icon_url"),
+        "presence_enabled": as_bool("presence_enabled"),
+        "presence_type": text("presence_type", "watching", 20) if text("presence_type", "watching", 20) in {"watching", "playing", "listening", "competing"} else "watching",
+        "presence_interval_seconds": interval,
+        "presence_statuses": statuses or list(DEFAULT_OWNER_SETTINGS["presence_statuses"]),
+        "global_pause": as_bool("global_pause"),
+        "global_pause_message": text("global_pause_message", "Bot features are temporarily paused for maintenance.", 300),
+        "owner_contact": text("owner_contact", OWNER_CONTACT, 300),
+        "dm_sender_enabled": as_bool("dm_sender_enabled"),
+        "announcement_sender_enabled": as_bool("announcement_sender_enabled"),
+        "stats_interval_minutes": stats_interval,
+        "max_purge_amount": max_purge,
+    }
+    await set_owner_settings(updates)
+    if rotate_status.is_running():
+        rotate_status.change_interval(seconds=interval)
+    if update_stats.is_running():
+        update_stats.change_interval(minutes=stats_interval)
+    await save_event("dashboard_events", {"guild_id": None, "user_id": int(user["user_id"]), "event": "owner_settings_updated", "fields": sorted(updates)})
+    raise web.HTTPFound("/owner?saved=1")
+
+
+async def command_settings_page(request: web.Request) -> web.Response:
+    user = await get_dashboard_user(request)
+    guild_id = int(request.match_info["guild_id"])
+    if not user or not await dashboard_can_access(user, guild_id):
+        raise web.HTTPForbidden(text=owner_private_message())
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    config = await get_guild_config(guild_id)
+    saved = "<div class='notice success'>Command and module settings saved.</div>" if request.query.get("saved") else ""
+    enabled_map = config.get("command_enabled") or {}
+    def opts(value: bool) -> str:
+        return f"<option value='true' {'selected' if value else ''}>Enabled</option><option value='false' {'selected' if not value else ''}>Disabled</option>"
+    groups: Dict[str, list[str]] = {}
+    for name, meta in COMMAND_CATALOG.items():
+        groups.setdefault(meta["group"], []).append(name)
+    group_html = []
+    for group, names in groups.items():
+        cards = []
+        for name in names:
+            meta = COMMAND_CATALOG[name]
+            cards.append(f"<div class='command-card'><h3>/{html.escape(name)}</h3><div class='muted' style='font-size:10px'>{html.escape(meta['label'])}</div><div class='rowline'><span class='muted' style='font-size:10px'>Availability</span><select name='cmd_{html.escape(name)}'>{opts(bool(enabled_map.get(name, True)))}</select></div></div>")
+        group_html.append(f"<details {'open' if group in {'Essentials','Moderation'} else ''}><summary><span><b>•</b> {html.escape(group)}</span><small>{len(names)} commands</small></summary><div class='details-body'><div class='command-grid'>{''.join(cards)}</div></div></details>")
+    feature_labels = [("feature_utilities","Member utilities"),("feature_admin_commands","Admin commands"),("feature_verification","Verification"),("feature_welcome","Welcome"),("feature_tickets","Tickets"),("feature_moderation","Moderation"),("feature_stats","Live stats"),("feature_announcements","Announcements"),("feature_dms","DM sender")]
+    modules = "".join(f"<div class='module'><b>{html.escape(label)}</b><select name='{key}'>{opts(bool(config.get(key, True)))}</select></div>" for key,label in feature_labels)
+    body = f"""
+    <section class='hero compact-hero'><span class='eyebrow'>Command center</span><h1>{html.escape(guild.name)} commands.</h1><p class='muted'>Soft-disable individual slash commands or entire modules without removing registrations from Discord. The owner account always bypasses disabled states so you cannot lock yourself out.</p></section>{saved}
+    <div class='dashboard-actions'><a class='btn secondary' href='/guild/{guild_id}'>← Server settings</a><a class='btn ghost' href='/guild/{guild_id}/activity'>Activity</a></div>
+    <form class='settings-form' method='post'>
+      <details open><summary><span><b>01</b> Module switches</span><small>Control complete feature groups</small></summary><div class='details-body'><div class='module-strip'>{modules}</div></div></details>
+      <details open><summary><span><b>02</b> Member-facing copy</span><small>Customize the most visible public command responses</small></summary><div class='details-body'><div class='row'><label>Help title<input name='help_title' maxlength='100' value='{html.escape(str(config.get('help_title') or 'Command Center'))}'></label><label>Ping title<input name='ping_title' maxlength='100' value='{html.escape(str(config.get('ping_title') or 'System Online'))}'></label></div><label>Help description<textarea name='help_description' maxlength='800'>{html.escape(str(config.get('help_description') or ''))}</textarea></label><label>Ping description<input name='ping_description' maxlength='300' value='{html.escape(str(config.get('ping_description') or 'Discord latency: `{latency_ms}ms`'))}'><small>Available variable: &#123;latency_ms&#125;</small></label><div class='row'><label>Store title<input name='store_title' maxlength='100' value='{html.escape(str(config.get('store_title') or 'moealturej Store'))}'></label><label>Store button label<input name='store_button_label' maxlength='80' value='{html.escape(str(config.get('store_button_label') or 'Open Store'))}'></label></div><label>Store description<textarea name='store_description' maxlength='800'>{html.escape(str(config.get('store_description') or ''))}</textarea></label></div></details>
+      {''.join(group_html)}
+      <div class='savebar'><span class='muted'>Changes are applied on the next command interaction.</span><button class='primary' type='submit'>Save command center</button></div>
+    </form>"""
+    return page(f"{guild.name} Commands", body)
+
+
+async def command_settings_save(request: web.Request) -> web.Response:
+    user = await get_dashboard_user(request)
+    guild_id = int(request.match_info["guild_id"])
+    if not user or not await dashboard_can_access(user, guild_id):
+        raise web.HTTPForbidden(text=owner_private_message())
+    data = await request.post()
+    def as_bool(name: str, default: bool = True) -> bool:
+        raw = data.get(name)
+        return default if raw is None else str(raw).lower() == "true"
+    def text(name: str, default: str = "", limit: int = 800) -> str:
+        return str(data.get(name) or default).strip()[:limit]
+    command_map = {name: as_bool(f"cmd_{name}", True) for name in COMMAND_CATALOG}
+    updates: Dict[str, Any] = {
+        "command_enabled": command_map,
+        "help_title": text("help_title", "Command Center", 100),
+        "help_description": text("help_description", "Everything you need, organized in one place.", 800),
+        "ping_title": text("ping_title", "System Online", 100),
+        "ping_description": text("ping_description", "Discord latency: `{latency_ms}ms`", 300),
+        "store_title": text("store_title", "moealturej Store", 100),
+        "store_description": text("store_description", "Browse products, downloads, and account tools securely.", 800),
+        "store_button_label": text("store_button_label", "Open Store", 80),
+    }
+    for feature in ("feature_utilities","feature_admin_commands","feature_verification","feature_welcome","feature_tickets","feature_moderation","feature_stats","feature_announcements","feature_dms"):
+        updates[feature] = as_bool(feature, True)
+    await set_config(guild_id, updates)
+    await save_event("dashboard_events", {"guild_id": guild_id, "user_id": int(user["user_id"]), "event": "command_settings_updated"})
+    raise web.HTTPFound(f"/guild/{guild_id}/commands?saved=1")
 
 async def login(request: web.Request) -> web.Response:
     state = secrets.token_urlsafe(32)
@@ -1086,7 +1524,6 @@ async def login(request: web.Request) -> web.Response:
         "response_type": "code",
         "scope": "identify guilds",
         "state": state,
-        "prompt": "none",
     }
     raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{urlencode(params)}")
 
@@ -1141,22 +1578,23 @@ async def guild_page(request: web.Request) -> web.Response:
 
     roles = [r for r in guild.roles if not r.is_default() and not r.managed]
     text_channels = guild.text_channels
+    voice_channels = guild.voice_channels
     categories = guild.categories
     me = guild.me
     permissions = me.guild_permissions if me else discord.Permissions.none()
     verified_role = guild.get_role(int(config.get("verified_role") or 0))
     problems: list[str] = []
-    if not permissions.manage_roles:
-        problems.append("Bot is missing Manage Roles")
-    if not permissions.manage_channels:
-        problems.append("Bot is missing Manage Channels")
+    if config.get("feature_verification", True) and not permissions.manage_roles:
+        problems.append("Verification needs Manage Roles")
+    if (config.get("feature_tickets", True) or config.get("feature_stats", True)) and not permissions.manage_channels:
+        problems.append("Tickets/live stats need Manage Channels")
     if not permissions.send_messages:
         problems.append("Bot is missing Send Messages")
-    if verified_role and me and verified_role >= me.top_role:
+    if config.get("feature_verification", True) and verified_role and me and verified_role >= me.top_role:
         problems.append("Verified role is above the bot role")
-    if not config.get("verified_role"):
+    if config.get("feature_verification", True) and not config.get("verified_role"):
         problems.append("Verified role is not selected")
-    if not config.get("ticket_category"):
+    if config.get("feature_tickets", True) and not config.get("ticket_category"):
         problems.append("Ticket category is not selected")
 
     open_tickets = len(config.get("open_tickets", {}))
@@ -1173,7 +1611,7 @@ async def guild_page(request: web.Request) -> web.Response:
     </section>
     {saved_banner}
     <div class='notice {diag_class}'><strong>Setup audit:</strong> {html.escape(diag_text)}</div>
-    <div class='dashboard-actions'><a class='btn secondary' href='/guild/{guild_id}/announcements'>Announcement</a><a class='btn secondary' href='/guild/{guild_id}/embeds'>Embed builder</a><a class='btn secondary' href='/guild/{guild_id}/dms'>DM sender</a><a class='btn secondary' href='/guild/{guild_id}/activity'>Activity & errors</a></div>
+    <div class='dashboard-actions'><a class='btn primary' href='/guild/{guild_id}/commands'>Command center</a><a class='btn secondary' href='/guild/{guild_id}/announcements'>Announcement</a><a class='btn secondary' href='/guild/{guild_id}/embeds'>Embed builder</a><a class='btn secondary' href='/guild/{guild_id}/dms'>DM sender</a><a class='btn secondary' href='/guild/{guild_id}/activity'>Activity & errors</a></div>
 
     <form class='settings-form' method='post'>
       <details open><summary><span><b>01</b> Brand & core settings</span><small>Identity, access, and public links</small></summary><div class='details-body'>
@@ -1181,6 +1619,7 @@ async def guild_page(request: web.Request) -> web.Response:
         <div class='row'><label>Brand name<input name='brand_name' maxlength='60' value='{html.escape(str(config.get('brand_name') or 'moealturej'))}'></label><label>Brand color<input name='brand_color' maxlength='7' value='#{html.escape(str(config.get('brand_color') or '7C3AED').lstrip('#'))}' placeholder='#7C3AED'></label></div>
         <label>Embed footer<input name='brand_footer' maxlength='150' value='{html.escape(str(config.get('brand_footer') or ''))}'></label>
         <div class='row'><label>Brand icon URL<input name='brand_icon_url' value='{html.escape(str(config.get('brand_icon_url') or ''))}' placeholder='Optional HTTPS image URL'></label><label>Bot admin role<select name='bot_admin_role'>{options(roles, config.get('bot_admin_role'))}</select></label></div>
+        <div class='row'><label>Default announcement footer<input name='announce_footer' maxlength='150' value='{html.escape(str(config.get('announce_footer') or 'moealturej'))}'></label><label>Default announcement image URL<input name='announce_image' value='{html.escape(str(config.get('announce_image') or ''))}' placeholder='Optional banner image'></label></div>
       </div></details>
 
       <details open><summary><span><b>02</b> Verification system</span><small>OAuth security, account rules, and role assignment</small></summary><div class='details-body'>
@@ -1212,8 +1651,17 @@ async def guild_page(request: web.Request) -> web.Response:
         </div>
       </div></details>
 
-      <details><summary><span><b>05</b> Logs & moderation</span><small>Where operational events are recorded</small></summary><div class='details-body'>
+      <details><summary><span><b>05</b> Logs & moderation</span><small>Audit destinations and member notification behavior</small></summary><div class='details-body'>
         <div class='row'><label>Moderation logs<select name='moderation_log_channel'>{options(text_channels, config.get('moderation_log_channel'), prefix='#')}</select></label><label>Command logs<select name='command_log_channel'>{options(text_channels, config.get('command_log_channel'), prefix='#')}</select></label></div>
+        <div class='row'><label>DM members when warned<select name='moderation_dm_warn'><option value='true' {selected(bool(config.get('moderation_dm_warn', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('moderation_dm_warn', True)))}>Disabled</option></select></label><label>DM members when timed out<select name='moderation_dm_timeout'><option value='true' {selected(bool(config.get('moderation_dm_timeout', True)))}>Enabled</option><option value='false' {selected(not bool(config.get('moderation_dm_timeout', True)))}>Disabled</option></select></label></div>
+      </div></details>
+
+      <details><summary><span><b>06</b> Live server stats</span><small>Voice-channel counters and display templates</small></summary><div class='details-body'>
+        <div class='row'><label>Stats category<select name='stats_category'>{options(categories, config.get('stats_category'))}</select></label><label>Members voice channel<select name='stats_channel_members'>{options(voice_channels, (config.get('stats_channels') or {}).get('members'))}</select></label></div>
+        <div class='row'><label>Humans voice channel<select name='stats_channel_humans'>{options(voice_channels, (config.get('stats_channels') or {}).get('humans'))}</select></label><label>Bots voice channel<select name='stats_channel_bots'>{options(voice_channels, (config.get('stats_channels') or {}).get('bots'))}</select></label></div>
+        <label>Boosts voice channel<select name='stats_channel_boosts'>{options(voice_channels, (config.get('stats_channels') or {}).get('boosts'))}</select></label>
+        <div class='row'><label>Members name template<input name='stats_name_members' maxlength='100' value='{html.escape(str(config.get('stats_name_members') or DEFAULT_GUILD_CONFIG['stats_name_members']))}'><small>Use &#123;count&#125; and &#123;server&#125;.</small></label><label>Humans name template<input name='stats_name_humans' maxlength='100' value='{html.escape(str(config.get('stats_name_humans') or DEFAULT_GUILD_CONFIG['stats_name_humans']))}'></label></div>
+        <div class='row'><label>Bots name template<input name='stats_name_bots' maxlength='100' value='{html.escape(str(config.get('stats_name_bots') or DEFAULT_GUILD_CONFIG['stats_name_bots']))}'></label><label>Boosts name template<input name='stats_name_boosts' maxlength='100' value='{html.escape(str(config.get('stats_name_boosts') or DEFAULT_GUILD_CONFIG['stats_name_boosts']))}'></label></div>
       </div></details>
 
       <div class='savebar'><span class='muted'>Changes apply immediately after saving.</span><button type='submit'>Save all settings</button></div>
@@ -1229,7 +1677,7 @@ async def guild_save(request: web.Request) -> web.Response:
         raise web.HTTPForbidden(text=owner_private_message())
     data = await request.post()
 
-    def as_int(name: str, default: Optional[int] = None, low: int = 0, high: int = 100_000_000) -> Optional[int]:
+    def as_int(name: str, default: Optional[int] = None, low: int = 0, high: int = 10**20) -> Optional[int]:
         value = str(data.get(name, "")).strip()
         if not value and default is None:
             return None
@@ -1244,8 +1692,12 @@ async def guild_save(request: web.Request) -> web.Response:
     def text(name: str, default: str = "", limit: int = 1500) -> str:
         return str(data.get(name) or default).strip()[:limit]
 
+    def optional_url(name: str) -> str:
+        value = text(name, "", 500)
+        return value if is_http_url(value) else ""
+
     store_url = text("store_url", DEFAULT_STORE_URL, 500)
-    if urlparse(store_url).scheme not in {"http", "https"}:
+    if not is_http_url(store_url):
         store_url = DEFAULT_STORE_URL
     brand_color = text("brand_color", "7C3AED", 7).lstrip("#").upper()
     if len(brand_color) not in {3, 6} or any(ch not in string.hexdigits for ch in brand_color):
@@ -1256,7 +1708,9 @@ async def guild_save(request: web.Request) -> web.Response:
         "brand_name": text("brand_name", "moealturej", 60),
         "brand_color": brand_color,
         "brand_footer": text("brand_footer", "moealturej", 150),
-        "brand_icon_url": text("brand_icon_url", "", 500),
+        "brand_icon_url": optional_url("brand_icon_url"),
+        "announce_footer": text("announce_footer", "moealturej", 150),
+        "announce_image": optional_url("announce_image"),
         "verified_role": as_int("verified_role"),
         "unverified_role": as_int("unverified_role"),
         "auto_role": as_int("auto_role"),
@@ -1277,6 +1731,19 @@ async def guild_save(request: web.Request) -> web.Response:
         "welcome_ping_user": as_bool("welcome_ping_user"),
         "moderation_log_channel": as_int("moderation_log_channel"),
         "command_log_channel": as_int("command_log_channel"),
+        "moderation_dm_warn": as_bool("moderation_dm_warn"),
+        "moderation_dm_timeout": as_bool("moderation_dm_timeout"),
+        "stats_category": as_int("stats_category"),
+        "stats_channels": {
+            "members": as_int("stats_channel_members"),
+            "humans": as_int("stats_channel_humans"),
+            "bots": as_int("stats_channel_bots"),
+            "boosts": as_int("stats_channel_boosts"),
+        },
+        "stats_name_members": text("stats_name_members", DEFAULT_GUILD_CONFIG["stats_name_members"], 100),
+        "stats_name_humans": text("stats_name_humans", DEFAULT_GUILD_CONFIG["stats_name_humans"], 100),
+        "stats_name_bots": text("stats_name_bots", DEFAULT_GUILD_CONFIG["stats_name_bots"], 100),
+        "stats_name_boosts": text("stats_name_boosts", DEFAULT_GUILD_CONFIG["stats_name_boosts"], 100),
         "ticket_category": as_int("ticket_category"),
         "ticket_panel_channel": as_int("ticket_panel_channel"),
         "ticket_log_channel": as_int("ticket_log_channel"),
@@ -1311,61 +1778,50 @@ def channel_options(guild: discord.Guild, selected: Optional[int] = None) -> str
     return "".join(out)
 
 
-def composer_page(guild: discord.Guild, mode: str, sent: bool = False) -> web.Response:
+def composer_page(guild: discord.Guild, mode: str, config: Dict[str, Any], sent: bool = False) -> web.Response:
     is_announcement = mode == "announcement"
-    title = "Announcement Sender" if is_announcement else "Embed Sender"
+    title = "Announcement Composer" if is_announcement else "Embed Composer"
+    default_color = str(config.get("brand_color") or "A855F7").lstrip("#")
     defaults = {
         "title": "New Announcement" if is_announcement else "Embed Title",
-        "message": "Write your embed description here..." if not is_announcement else "Write your announcement details here...",
-        "content": "@everyone" if is_announcement else "",
-        "footer": "moealturej",
-        "color": "7C3AED",
+        "message": "Write your announcement details here..." if is_announcement else "Write your embed description here...",
+        "content": "",
+        "footer": str(config.get("announce_footer") or config.get("brand_footer") or "moealturej"),
+        "color": default_color,
+        "image": str(config.get("announce_image") or "") if is_announcement else "",
     }
+    mention_control = "<label style='display:flex;align-items:center;gap:10px;margin-bottom:14px'><input name='allow_mentions' type='checkbox' style='width:auto;margin:0'> Allow @user, @role, and @everyone mentions in the top message</label>" if is_announcement else ""
     body = f"""
-    <section class='hero'><span class='pill'>{'📣 Premium announcement' if is_announcement else '✨ Premium embed'} composer</span><h1>{title}</h1><p class='muted'>Create a fully custom Discord message: optional text above the embed, optional embed, thumbnail image, large image, footer, color, and a live premium preview.</p></section>
-    {'<section class="card" style="margin-top:16px"><span class="pill">✅ Sent successfully</span><p class="muted">Your message was sent to Discord.</p></section>' if sent else ''}
-    <div class='section-title'><h2>Compose</h2><a class='btn secondary' href='/guild/{guild.id}'>Back to settings</a></div>
+    <section class='hero compact-hero'><span class='eyebrow'>{'Announcement tools' if is_announcement else 'Embed tools'}</span><h1>{title}.</h1><p class='muted'>Build a polished Discord message with a safe live preview. Mentions are suppressed by default to prevent accidental mass pings.</p></section>
+    {'<div class="notice success">Message delivered to Discord successfully.</div>' if sent else ''}
+    <div class='section-title'><div><span class='eyebrow'>Composer</span><h2 style='margin-top:8px'>Message content</h2></div><a class='btn secondary' href='/guild/{guild.id}'>Back to server</a></div>
     <form class='grid' method='post'>
       <section class='card'>
-        <label>Send to channel<select name='channel_id' required>{channel_options(guild)}</select></label>
-        <div class='form-section'><h2>Message outside embed</h2><p class='muted'>This appears above the embed. Use it for pings, short notes, links, or send a plain message only.</p></div>
+        <label>Destination channel<select name='channel_id' required>{channel_options(guild)}</select></label>
         <label>Top message / content<textarea id='contentInput' name='content' placeholder='Optional text shown above the embed'>{html.escape(defaults['content'])}</textarea></label>
-        <div class='form-section'><h2>Embed builder</h2><label style='display:flex;align-items:center;gap:10px'><input id='embedEnabled' name='embed_enabled' type='checkbox' checked style='width:auto;margin:0'> Include embed</label></div>
+        {mention_control}
+        <div class='form-section'><h3>Embed</h3><label style='display:flex;align-items:center;gap:10px;margin:12px 0'><input id='embedEnabled' name='embed_enabled' type='checkbox' checked style='width:auto;margin:0'> Include an embed</label></div>
         <label>Embed title<input id='titleInput' name='title' maxlength='256' value='{html.escape(defaults['title'])}'></label>
         <label>Embed description<textarea id='messageInput' name='message'>{html.escape(defaults['message'])}</textarea></label>
-        <div class='row'><label>Color hex<input id='colorInput' name='color' value='{defaults['color']}' placeholder='7C3AED'></label><label>Footer<input id='footerInput' name='footer' value='{html.escape(defaults['footer'])}'></label></div>
-        <div class='row'><label>Thumbnail image URL<input id='thumbInput' name='thumbnail_url' placeholder='Small top-right embed image URL'></label><label>Large image URL<input id='imageInput' name='image_url' placeholder='Large image under embed text URL'></label></div>
-        <p class='tiny'>Discord supports one embed thumbnail and one large embed image. The top message is separate from the embed.</p>
-        <div class='toolbar'><button type='submit'>{'Send announcement' if is_announcement else 'Send embed'}</button><a class='btn secondary' href='/guild/{guild.id}'>Cancel</a></div>
+        <div class='row'><label>Color hex<input id='colorInput' name='color' maxlength='7' value='{html.escape(defaults['color'])}' placeholder='A855F7'></label><label>Footer<input id='footerInput' name='footer' maxlength='2048' value='{html.escape(defaults['footer'])}'></label></div>
+        <div class='row'><label>Thumbnail image URL<input id='thumbInput' name='thumbnail_url' placeholder='https://...'></label><label>Large image URL<input id='imageInput' name='image_url' value='{html.escape(defaults['image'])}' placeholder='https://...'></label></div>
+        <div class='toolbar'><button class='primary' type='submit'>{'Send announcement' if is_announcement else 'Send embed'}</button><a class='btn secondary' href='/guild/{guild.id}'>Cancel</a></div>
       </section>
       <section class='card'>
-        <h2>Live Preview</h2>
-        <p class='muted'>Preview includes the outside message, embed thumbnail, and large image.</p>
-        <div class='preview-shell'>
-          <div class='preview-message' id='contentPreview'></div>
-          <div class='preview-box' id='previewBox'>
-            <img class='preview-thumb' id='previewThumb' style='display:none'>
-            <div class='preview-title' id='previewTitle'></div>
-            <div class='preview-desc' id='previewDesc'></div>
-            <img class='preview-img' id='previewImg' style='display:none'>
-            <div class='preview-footer' id='previewFooter'></div>
-          </div>
-        </div>
+        <h3>Discord preview</h3><p class='muted'>The preview mirrors the text, accent, images, and footer before you send.</p>
+        <div class='preview-shell'><div class='preview-message' id='contentPreview'></div><div class='preview-box' id='previewBox'><img class='preview-thumb' id='previewThumb' style='display:none'><div class='preview-title' id='previewTitle'></div><div class='preview-desc' id='previewDesc'></div><img class='preview-img' id='previewImg' style='display:none'><div class='preview-footer' id='previewFooter'></div></div></div>
       </section>
     </form>
     <script>
     const contentInput=document.getElementById('contentInput'), embedEnabled=document.getElementById('embedEnabled'), titleInput=document.getElementById('titleInput'), messageInput=document.getElementById('messageInput'), colorInput=document.getElementById('colorInput'), footerInput=document.getElementById('footerInput'), imageInput=document.getElementById('imageInput'), thumbInput=document.getElementById('thumbInput');
     const contentPreview=document.getElementById('contentPreview'), box=document.getElementById('previewBox'), pTitle=document.getElementById('previewTitle'), pDesc=document.getElementById('previewDesc'), pFooter=document.getElementById('previewFooter'), pImg=document.getElementById('previewImg'), pThumb=document.getElementById('previewThumb');
-    function cleanHex(v){{v=(v||'7C3AED').replace('#','').trim(); return /^[0-9a-fA-F]{{6}}$/.test(v)?v:'7C3AED'}}
-    function setImg(el,url){{url=(url||'').trim(); if(url){{el.src=url; el.style.display='block'}}else{{el.style.display='none'}}}}
-    function updatePreview(){{
-      const top=(contentInput.value||'').trim(); contentPreview.textContent=top||'No outside message. Only the embed will be sent.'; contentPreview.style.display=top||!embedEnabled.checked?'block':'none';
-      box.style.display=embedEnabled.checked?'block':'none'; pTitle.textContent=titleInput.value||'Untitled'; pDesc.textContent=messageInput.value||''; pFooter.textContent=footerInput.value||''; box.style.borderLeftColor='#'+cleanHex(colorInput.value); setImg(pImg,imageInput.value); setImg(pThumb,thumbInput.value);
-    }}
-    [contentInput,embedEnabled,titleInput,messageInput,colorInput,footerInput,imageInput,thumbInput].forEach(el=>el.addEventListener('input',updatePreview)); embedEnabled.addEventListener('change',updatePreview); updatePreview();
-    </script>
-    """
+    function cleanHex(v){{v=(v||'A855F7').replace('#','').trim();return /^[0-9a-fA-F]{{6}}$/.test(v)?v:'A855F7'}}
+    function setImg(el,url){{url=(url||'').trim();if(url){{el.src=url;el.style.display='block'}}else{{el.removeAttribute('src');el.style.display='none'}}}}
+    function updatePreview(){{const top=(contentInput.value||'').trim();contentPreview.textContent=top||'No top message';contentPreview.style.display=top?'block':'none';box.style.display=embedEnabled.checked?'block':'none';pTitle.textContent=titleInput.value||'Untitled';pDesc.textContent=messageInput.value||'';pFooter.textContent=footerInput.value||'';box.style.borderLeftColor='#'+cleanHex(colorInput.value);setImg(pImg,imageInput.value);setImg(pThumb,thumbInput.value)}}
+    [contentInput,embedEnabled,titleInput,messageInput,colorInput,footerInput,imageInput,thumbInput].forEach(el=>el.addEventListener('input',updatePreview));embedEnabled.addEventListener('change',updatePreview);updatePreview();
+    </script>"""
     return page(title, body)
+
 
 async def announcement_page(request: web.Request) -> web.Response:
     user = await get_dashboard_user(request)
@@ -1375,7 +1831,11 @@ async def announcement_page(request: web.Request) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
-    return composer_page(guild, "announcement", request.query.get("sent") == "1")
+    config = await get_guild_config(guild_id)
+    owner = await get_owner_settings()
+    if (config.get("feature_announcements") is False or owner.get("announcement_sender_enabled") is False) and not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text="Announcement tools are disabled.")
+    return composer_page(guild, "announcement", config, request.query.get("sent") == "1")
 
 
 async def embed_page(request: web.Request) -> web.Response:
@@ -1386,7 +1846,11 @@ async def embed_page(request: web.Request) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
-    return composer_page(guild, "embed", request.query.get("sent") == "1")
+    config = await get_guild_config(guild_id)
+    owner = await get_owner_settings()
+    if (config.get("feature_announcements") is False or owner.get("announcement_sender_enabled") is False) and not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text="Embed tools are disabled.")
+    return composer_page(guild, "embed", config, request.query.get("sent") == "1")
 
 
 async def send_composer(request: web.Request, mode: str) -> web.Response:
@@ -1397,11 +1861,17 @@ async def send_composer(request: web.Request, mode: str) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    config = await get_guild_config(guild_id)
+    owner = await get_owner_settings()
+    if (config.get("feature_announcements") is False or owner.get("announcement_sender_enabled") is False) and not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text="Message composer is disabled.")
     if rate_limiter.on_cooldown(f"dashboard_send:{guild_id}:{user['user_id']}:{mode}", DASHBOARD_SEND_COOLDOWN_SECONDS):
         return page("Slow down", "<section class='card'><h1>Slow down</h1><p class='muted'>Wait a few seconds before sending another dashboard message.</p></section>")
     data = await request.post()
-    channel_id = int(str(data.get("channel_id", "0")) or 0)
-    channel = guild.get_channel(channel_id)
+    raw_channel = str(data.get("channel_id", "0")).strip()
+    if not raw_channel.isdigit():
+        return page("Invalid channel", "<section class='card'><h1>Invalid channel</h1><p class='muted'>Choose a valid text channel.</p></section>")
+    channel = guild.get_channel(int(raw_channel))
     if not isinstance(channel, discord.TextChannel):
         return page("Invalid channel", "<section class='card'><h1>Invalid channel</h1><p class='muted'>Choose a text channel the bot can send messages in.</p></section>")
 
@@ -1409,14 +1879,16 @@ async def send_composer(request: web.Request, mode: str) -> web.Response:
     embed_enabled = data.get("embed_enabled") == "on"
     embed = None
     title = str(data.get("title") or ("Announcement" if mode == "announcement" else "Embed"))[:256]
-
     if embed_enabled:
         message = str(data.get("message") or "").strip()[:4000]
-        footer = str(data.get("footer") or "moealturej")[:2048]
-        image_url = str(data.get("image_url") or "").strip()
-        thumbnail_url = str(data.get("thumbnail_url") or "").strip()
-        color = parse_embed_color(str(data.get("color") or ""))
-        embed = make_embed(title, message or " ", color)
+        footer = str(data.get("footer") or config.get("brand_footer") or "moealturej")[:2048]
+        image_url = str(data.get("image_url") or "").strip()[:500]
+        thumbnail_url = str(data.get("thumbnail_url") or "").strip()[:500]
+        for label, value in (("image", image_url), ("thumbnail", thumbnail_url)):
+            if value and not is_http_url(value):
+                return page("Invalid image URL", f"<section class='card'><h1>Invalid {label} URL</h1><p class='muted'>Use a complete http:// or https:// image URL.</p></section>")
+        color = parse_embed_color(str(data.get("color") or config.get("brand_color") or ""))
+        embed = make_branded_embed(config, title, message or " ", color)
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
         if image_url:
@@ -1426,12 +1898,14 @@ async def send_composer(request: web.Request, mode: str) -> web.Response:
 
     if not content and not embed:
         return page("Nothing to send", "<section class='card'><h1>Nothing to send</h1><p class='muted'>Add a top message, enable the embed, or both.</p></section>")
-
-    sent_message = await safe_channel_send(channel, content=content or None, embed=embed, allowed_mentions=discord.AllowedMentions.all() if mode == "announcement" else discord.AllowedMentions.none())
+    allow_mentions = mode == "announcement" and data.get("allow_mentions") == "on"
+    mentions = discord.AllowedMentions(users=True, roles=True, everyone=True) if allow_mentions else discord.AllowedMentions.none()
+    sent_message = await safe_channel_send(channel, content=content or None, embed=embed, allowed_mentions=mentions)
     if not sent_message:
         return page("Send failed", "<section class='card'><h1>Discord rejected the send</h1><p class='muted'>The bot hit a temporary Discord limit or lacks permission. Try again shortly.</p></section>")
-    await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": f"send_{mode}", "channel_id": channel.id, "title": title, "has_content": bool(content), "has_embed": bool(embed)})
+    await save_event("dashboard_events", {"guild_id": guild.id, "user_id": int(user["user_id"]), "event": f"send_{mode}", "channel_id": channel.id, "title": title, "has_content": bool(content), "has_embed": bool(embed), "mentions_enabled": allow_mentions})
     raise web.HTTPFound(f"/guild/{guild.id}/{'announcements' if mode == 'announcement' else 'embeds'}?sent=1")
+
 
 async def announcement_send(request: web.Request) -> web.Response:
     return await send_composer(request, "announcement")
@@ -1439,7 +1913,6 @@ async def announcement_send(request: web.Request) -> web.Response:
 
 async def embed_send(request: web.Request) -> web.Response:
     return await send_composer(request, "embed")
-
 
 def member_select_options(guild: discord.Guild) -> str:
     """Build a manageable cached-member selector for the dashboard DM tool."""
@@ -1462,31 +1935,39 @@ async def dm_page(request: web.Request) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    config = await get_guild_config(guild_id)
+    owner = await get_owner_settings()
+    if (config.get("feature_dms") is False or owner.get("dm_sender_enabled") is False) and not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text="DM sender is disabled.")
     sent = request.query.get("sent") == "1"
     failed = request.query.get("failed") == "1"
     reason = request.query.get("reason", "")[:180]
+    default_color = str(config.get("brand_color") or "A855F7").lstrip("#")
+    brand_name = str(config.get("brand_name") or "moealturej")[:60]
+    default_footer = str(config.get("brand_footer") or brand_name)[:150]
+    default_title = f"Message from {brand_name}"[:256]
     body = f"""
-    <section class='hero'><span class='pill'>💌 Premium DM composer</span><h1>User DM Sender</h1><p class='muted'>Send fully custom private DMs with text above the embed, optional embed, thumbnail image, large image, footer, color, and a live Discord-style preview.</p></section>
-    {'<section class="card" style="margin-top:16px"><span class="pill">✅ DM sent</span><p class="muted">The private message was delivered successfully.</p></section>' if sent else ''}
-    {'<section class="card" style="margin-top:16px"><span class="pill" style="background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.28);color:#fecdd3">⚠️ DM failed</span><p class="muted">' + html.escape(reason or 'The bot could not DM that user. They may have DMs disabled or the ID was invalid.') + '</p></section>' if failed else ''}
-    <div class='section-title'><h2>Compose private message</h2><a class='btn secondary' href='/guild/{guild.id}'>Back to settings</a></div>
+    <section class='hero compact-hero'><span class='eyebrow'>Private messaging</span><h1>DM Composer.</h1><p class='muted'>Send a controlled private message using this server's branding. User, role, and everyone mentions are suppressed for safer production use.</p></section>
+    {'<div class="notice success">Private message delivered successfully.</div>' if sent else ''}
+    {'<div class="notice" style="border-color:rgba(251,113,133,.28);background:rgba(251,113,133,.08)"><strong>DM failed.</strong> ' + html.escape(reason or 'The user may have DMs disabled, blocked the bot, or the ID may be invalid.') + '</div>' if failed else ''}
+    <div class='section-title'><div><span class='eyebrow'>Direct message</span><h2 style='margin-top:8px'>Compose message</h2></div><a class='btn secondary' href='/guild/{guild.id}'>Back to server</a></div>
     <form class='grid' method='post'>
       <section class='card'>
-        <label>Choose cached member<select id='memberSelect'>{member_select_options(guild)}</select></label>
-        <label>Discord user ID<input id='userIdInput' name='user_id' inputmode='numeric' pattern='[0-9]{{15,25}}' placeholder='1222903158125105194' required></label>
-        <div class='form-section'><h2>Message outside embed</h2><p class='muted'>This appears as normal DM text above the embed. You can send only this, only an embed, or both.</p></div>
-        <label>Top DM message<textarea id='plainInput' name='plain_message' placeholder='Custom text shown above the embed'></textarea></label>
-        <div class='form-section'><h2>Optional embed</h2><label style='display:flex;align-items:center;gap:10px'><input id='embedEnabled' name='embed_enabled' type='checkbox' checked style='width:auto;margin:0'> Include embed</label></div>
-        <label>Embed title<input id='titleInput' name='title' maxlength='256' value='Message from moealturej'></label>
-        <label>Embed description<textarea id='messageInput' name='message'>Write your custom DM embed here...</textarea></label>
-        <div class='row'><label>Color hex<input id='colorInput' name='color' value='7C3AED' placeholder='7C3AED'></label><label>Footer<input id='footerInput' name='footer' value='moealturej'></label></div>
-        <div class='row'><label>Thumbnail image URL<input id='thumbInput' name='thumbnail_url' placeholder='Small top-right embed image URL'></label><label>Large image URL<input id='imageInput' name='image_url' placeholder='Large image under embed text URL'></label></div>
-        <p class='tiny'>Use thumbnail for a small logo/profile image and large image for banners or previews.</p>
-        <div class='toolbar'><button type='submit'>Send private DM</button><a class='btn secondary' href='/guild/{guild.id}'>Cancel</a></div>
+        <div class='form-section'><h3>Recipient</h3><p class='muted'>Choose a cached member or paste an exact Discord user ID.</p></div>
+        <label>Cached member<select id='memberSelect'>{member_select_options(guild)}</select></label>
+        <label>Discord user ID<input id='userIdInput' name='user_id' inputmode='numeric' pattern='[0-9]{{15,25}}' autocomplete='off' placeholder='1222903158125105194' required></label>
+        <div class='form-section'><h3>Message</h3><p class='muted'>Plain text is sent above the embed. You can send either part by itself.</p></div>
+        <label>Top message<textarea id='plainInput' name='plain_message' maxlength='1900' placeholder='Optional text shown above the embed'></textarea></label>
+        <label style='display:flex;align-items:center;gap:10px;margin:12px 0'><input id='embedEnabled' name='embed_enabled' type='checkbox' checked style='width:auto;margin:0'> Include branded embed</label>
+        <label>Embed title<input id='titleInput' name='title' maxlength='256' value='{html.escape(default_title)}'></label>
+        <label>Embed description<textarea id='messageInput' name='message' maxlength='4000'>Write your private message here...</textarea></label>
+        <div class='row'><label>Color hex<input id='colorInput' name='color' maxlength='7' value='{html.escape(default_color)}' placeholder='A855F7'></label><label>Footer<input id='footerInput' name='footer' maxlength='2048' value='{html.escape(default_footer)}'></label></div>
+        <div class='row'><label>Thumbnail image URL<input id='thumbInput' name='thumbnail_url' maxlength='500' placeholder='https://...'></label><label>Large image URL<input id='imageInput' name='image_url' maxlength='500' placeholder='https://...'></label></div>
+        <p class='tiny'>Only complete http:// or https:// image URLs are accepted. Discord mentions are disabled in both the plain message and embed.</p>
+        <div class='toolbar'><button class='primary' type='submit'>Send private DM</button><a class='btn secondary' href='/guild/{guild.id}'>Cancel</a></div>
       </section>
       <section class='card'>
-        <h2>Live Preview</h2>
-        <p class='muted'>This is a close preview of the DM the user will receive.</p>
+        <h3>Discord preview</h3><p class='muted'>Preview the message before sending it to the selected user.</p>
         <div class='preview-shell'>
           <div class='preview-message' id='plainPreview'></div>
           <div class='preview-box' id='previewBox'>
@@ -1504,16 +1985,17 @@ async def dm_page(request: web.Request) -> web.Response:
     const titleInput=document.getElementById('titleInput'), messageInput=document.getElementById('messageInput'), colorInput=document.getElementById('colorInput'), footerInput=document.getElementById('footerInput'), imageInput=document.getElementById('imageInput'), thumbInput=document.getElementById('thumbInput');
     const box=document.getElementById('previewBox'), pTitle=document.getElementById('previewTitle'), pDesc=document.getElementById('previewDesc'), pFooter=document.getElementById('previewFooter'), pImg=document.getElementById('previewImg'), pThumb=document.getElementById('previewThumb'), plainPreview=document.getElementById('plainPreview');
     memberSelect.addEventListener('change',()=>{{if(memberSelect.value) userIdInput.value=memberSelect.value;}});
-    function cleanHex(v){{v=(v||'7C3AED').replace('#','').trim(); return /^[0-9a-fA-F]{{6}}$/.test(v)?v:'7C3AED'}}
-    function setImg(el,url){{url=(url||'').trim(); if(url){{el.src=url; el.style.display='block'}}else{{el.style.display='none'}}}}
+    function cleanHex(v){{v=(v||'{html.escape(default_color)}').replace('#','').trim(); return /^[0-9a-fA-F]{{3}}$|^[0-9a-fA-F]{{6}}$/.test(v)?v:'{html.escape(default_color)}'}}
+    function setImg(el,url){{url=(url||'').trim(); const u=url.toLowerCase(); if(u.startsWith('http://')||u.startsWith('https://')){{el.src=url;el.style.display='block'}}else{{el.removeAttribute('src');el.style.display='none'}}}}
     function updatePreview(){{
-      const plain=(plainInput.value||'').trim(); plainPreview.textContent=plain||'No outside DM message. Only the embed will be sent.'; plainPreview.style.display=plain||!embedEnabled.checked?'block':'none';
+      const plain=(plainInput.value||'').trim(); plainPreview.textContent=plain; plainPreview.style.display=plain?'block':'none';
       box.style.display=embedEnabled.checked?'block':'none'; pTitle.textContent=titleInput.value||'Untitled'; pDesc.textContent=messageInput.value||''; pFooter.textContent=footerInput.value||''; box.style.borderLeftColor='#'+cleanHex(colorInput.value); setImg(pImg,imageInput.value); setImg(pThumb,thumbInput.value);
     }}
-    [plainInput,embedEnabled,titleInput,messageInput,colorInput,footerInput,imageInput,thumbInput].forEach(el=>el.addEventListener('input',updatePreview)); embedEnabled.addEventListener('change',updatePreview); updatePreview();
+    [plainInput,titleInput,messageInput,colorInput,footerInput,imageInput,thumbInput].forEach(el=>el.addEventListener('input',updatePreview)); embedEnabled.addEventListener('change',updatePreview); updatePreview();
     </script>
     """
     return page("DM Sender", body)
+
 
 async def dm_send(request: web.Request) -> web.Response:
     user = await get_dashboard_user(request)
@@ -1523,24 +2005,32 @@ async def dm_send(request: web.Request) -> web.Response:
     guild = bot.get_guild(guild_id)
     if not guild:
         return page("Missing server", "<section class='card'><h1>Bot is not in this server</h1></section>")
+    config = await get_guild_config(guild_id)
+    owner = await get_owner_settings()
+    if (config.get("feature_dms") is False or owner.get("dm_sender_enabled") is False) and not is_owner_user(int(user["user_id"])):
+        raise web.HTTPForbidden(text="DM sender is disabled.")
     if rate_limiter.on_cooldown(f"dashboard_dm:{guild_id}:{user['user_id']}", DASHBOARD_SEND_COOLDOWN_SECONDS):
         raise web.HTTPFound(f"/guild/{guild_id}/dms?failed=1&reason=Wait+a+few+seconds+before+sending+another+DM")
     data = await request.post()
     raw_user_id = str(data.get("user_id", "")).strip()
-    if not raw_user_id.isdigit():
+    if not raw_user_id.isdigit() or not (15 <= len(raw_user_id) <= 25):
         raise web.HTTPFound(f"/guild/{guild.id}/dms?failed=1&reason=Invalid+Discord+user+ID")
     target_id = int(raw_user_id)
     plain_message = str(data.get("plain_message") or "").strip()[:1900]
     embed_enabled = data.get("embed_enabled") == "on"
     embed = None
     if embed_enabled:
-        title = str(data.get("title") or "Message from moealturej")[:256]
+        brand_name = str(config.get("brand_name") or "moealturej")[:60]
+        title = str(data.get("title") or f"Message from {brand_name}")[:256]
         message = str(data.get("message") or "").strip()[:4000]
-        footer = str(data.get("footer") or "moealturej")[:2048]
-        image_url = str(data.get("image_url") or "").strip()
-        thumbnail_url = str(data.get("thumbnail_url") or "").strip()
-        color = parse_embed_color(str(data.get("color") or ""))
-        embed = make_embed(title, message or " ", color)
+        footer = str(data.get("footer") or config.get("brand_footer") or brand_name)[:2048]
+        image_url = str(data.get("image_url") or "").strip()[:500]
+        thumbnail_url = str(data.get("thumbnail_url") or "").strip()[:500]
+        for label, value in (("image", image_url), ("thumbnail", thumbnail_url)):
+            if value and not is_http_url(value):
+                raise web.HTTPFound(f"/guild/{guild.id}/dms?failed=1&reason=Invalid+{label}+URL.+Use+http+or+https")
+        color = parse_embed_color(str(data.get("color") or config.get("brand_color") or ""))
+        embed = make_branded_embed(config, title, message or " ", color)
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
         if image_url:
@@ -1611,6 +2101,8 @@ async def verify_start(request: web.Request) -> web.Response:
         return page("Verification", f"<section class='hero compact-hero'><span class='pill'>Secure verification</span><h1>Start inside Discord</h1><p class='muted'>Return to <b>{html.escape(guild.name)}</b> and click its verification button. Direct or copied links are intentionally blocked.</p></section>")
 
     config = await get_guild_config(guild_id)
+    if config.get("feature_verification") is False:
+        return page("Verification paused", "<section class='hero compact-hero'><span class='eyebrow'>Unavailable</span><h1>Verification is paused.</h1><p class='muted'>An administrator has temporarily disabled this module.</p></section>")
     member = guild.get_member(requested_user_id) or await safe_fetch_member(guild, requested_user_id)
     if member:
         verified_role = guild.get_role(int(config.get("verified_role") or 0)) if config.get("verified_role") else None
@@ -1659,6 +2151,8 @@ async def verify_callback(request: web.Request) -> web.Response:
     if not guild:
         return page("Verification", "<section class='card'><h1>Server unavailable</h1></section>")
     config = await get_guild_config(guild_id)
+    if config.get("feature_verification") is False:
+        return page("Verification paused", "<section class='hero compact-hero'><span class='eyebrow'>Unavailable</span><h1>Verification is paused.</h1><p class='muted'>No roles were changed.</p></section>")
 
     token = await exchange_code(code, f"{PUBLIC_BASE_URL}/verify/callback")
     user = await discord_get("/users/@me", token["access_token"])
@@ -1733,6 +2227,14 @@ async def security_error_middleware(request: web.Request, handler):
             origin = request.headers.get("Origin")
             if origin and urlparse(origin).netloc != urlparse(PUBLIC_BASE_URL).netloc:
                 raise web.HTTPForbidden(text="Cross-site request blocked.")
+            csrf_cookie = request.cookies.get("moe_csrf", "")
+            csrf_value = unsign_value(csrf_cookie) if csrf_cookie else None
+            supplied = request.headers.get("X-CSRF-Token", "")
+            if request.content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+                form = await request.post()
+                supplied = str(form.get("_csrf") or supplied)
+            if not csrf_value or not csrf_value.startswith("csrf_") or not supplied or not hmac.compare_digest(csrf_cookie, supplied):
+                raise web.HTTPForbidden(text="Security token expired. Refresh the page and try again.")
         response = await handler(request)
     except web.HTTPException as exc:
         response = exc
@@ -1748,13 +2250,46 @@ async def security_error_middleware(request: web.Request, handler):
             f"<section class='card'><span class='pill'>Request failed</span><h1>That action could not be completed</h1><p class='muted'>The error was logged safely. Try again, then use this reference if it continues.</p><code>{incident}</code></section>",
         )
         response.set_status(500)
+    if request.method == "GET" and not request.cookies.get("moe_csrf"):
+        csrf = sign_value("csrf_" + secrets.token_urlsafe(24))
+        response.set_cookie("moe_csrf", csrf, max_age=WEB_SESSION_DAYS * 86400, secure=PUBLIC_BASE_URL.startswith("https://"), httponly=False, samesite="Strict")
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
     response.headers["X-Request-ID"] = request_id
+    if response.content_type == "text/html":
+        response.headers["Cache-Control"] = "no-store, private"
     return response
+
+async def status_page(request: web.Request) -> web.Response:
+    uptime = utcnow() - STARTED_AT
+    startup_wait = max(0, int((startup_blocked_until - utcnow()).total_seconds())) if startup_blocked_until else 0
+    mongo_ok = False
+    try:
+        if mdb is not None:
+            await asyncio.wait_for(mdb.command("ping"), timeout=2.0)
+            mongo_ok = True
+    except Exception:
+        mongo_ok = False
+    bot_ready = bot.is_ready()
+    overall = bot_ready and mongo_ok
+    uptime_seconds = int(uptime.total_seconds())
+    days, rem = divmod(uptime_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    uptime_label = f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
+    discord_text = "Operational" if bot_ready else ("Waiting / retrying" if startup_wait else "Starting")
+    database_text = "Operational" if mongo_ok else "Unavailable"
+    cooldown = round(rate_limiter.seconds_until_unblocked())
+    notice = "All core systems are operational." if overall else "One or more services need attention. The bot will continue retrying safe recoverable connections."
+    body = f"""
+    <section class='hero compact-hero'><span class='eyebrow'>System status</span><h1>{'All systems operational.' if overall else 'Service degraded.'}</h1><p class='muted'>{html.escape(notice)}</p><div class='stats'><div class='stat'><span>Discord</span><b style='font-size:17px'>{html.escape(discord_text)}</b></div><div class='stat'><span>Database</span><b style='font-size:17px'>{html.escape(database_text)}</b></div><div class='stat'><span>Uptime</span><b style='font-size:17px'>{html.escape(uptime_label)}</b></div><div class='stat'><span>Latency</span><b>{round(bot.latency*1000) if bot.latency else '—'}<small> ms</small></b></div></div></section>
+    <div class='section-title'><div><span class='eyebrow'>Runtime</span><h2 style='margin-top:8px'>Production health</h2></div><a class='btn secondary' href='/health'>JSON health</a></div>
+    <div class='grid'><section class='card'><div class='card-row'><div><h3>Discord gateway</h3><p class='muted'>Connection and command runtime.</p></div><span class='pill'>{html.escape(discord_text)}</span></div><p class='tiny'>Connected guilds: {len(bot.guilds)} • Global API cooldown: {cooldown}s</p></section><section class='card'><div class='card-row'><div><h3>MongoDB</h3><p class='muted'>Persistent settings, sessions, tickets, and activity.</p></div><span class='pill'>{html.escape(database_text)}</span></div><p class='tiny'>Database probe uses a short timeout and does not expose credentials.</p></section><section class='card'><div class='card-row'><div><h3>Build</h3><p class='muted'>Currently deployed application version.</p></div><code>{html.escape(BUILD_VERSION)}</code></div><p class='tiny'>Startup retry: {startup_wait}s remaining{' • ' + html.escape(last_startup_error or '') if last_startup_error else ''}</p></section></div>
+    """
+    return page("System Status", body)
 
 
 async def health(request: web.Request) -> web.Response:
@@ -1792,11 +2327,15 @@ async def start_web() -> None:
         return
     app = web.Application(client_max_size=8 * 1024 ** 2, middlewares=[security_error_middleware])
     app.router.add_get("/", home)
+    app.router.add_get("/owner", owner_page)
+    app.router.add_post("/owner", owner_save)
     app.router.add_get("/login", login)
     app.router.add_get("/oauth/callback", oauth_callback)
     app.router.add_get("/logout", logout)
     app.router.add_get("/guild/{guild_id}", guild_page)
     app.router.add_post("/guild/{guild_id}", guild_save)
+    app.router.add_get("/guild/{guild_id}/commands", command_settings_page)
+    app.router.add_post("/guild/{guild_id}/commands", command_settings_save)
     app.router.add_get("/guild/{guild_id}/announcements", announcement_page)
     app.router.add_post("/guild/{guild_id}/announcements", announcement_send)
     app.router.add_get("/guild/{guild_id}/embeds", embed_page)
@@ -1806,6 +2345,7 @@ async def start_web() -> None:
     app.router.add_post("/guild/{guild_id}/dms", dm_send)
     app.router.add_get("/verify/start", verify_start)
     app.router.add_get("/verify/callback", verify_callback)
+    app.router.add_get("/status", status_page)
     app.router.add_get("/health", health)
     web_runner = web.AppRunner(app, access_log=log)
     await web_runner.setup()
@@ -1861,12 +2401,12 @@ async def on_member_join(member: discord.Member):
     try:
         config = await get_guild_config(member.guild.id)
         verified_role = member.guild.get_role(int(config.get("verified_role") or 0)) if config.get("verified_role") else None
-        if config.get("unverified_role") and not (verified_role and verified_role in member.roles):
+        if config.get("feature_verification", True) and config.get("unverified_role") and not (verified_role and verified_role in member.roles):
             await safe_add_role(member, config.get("unverified_role"), "Unverified role on join")
-        if config.get("auto_role"):
+        if config.get("feature_welcome", True) and config.get("auto_role"):
             await safe_add_role(member, config.get("auto_role"), "Auto role on join")
         channel = member.guild.get_channel(int(config.get("welcome_channel") or 0))
-        if config.get("welcome_enabled", True) and isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
+        if config.get("feature_welcome", True) and config.get("welcome_enabled", True) and isinstance(channel, discord.TextChannel) and not rate_limiter.on_cooldown(f"welcome:{member.guild.id}", MEMBER_JOIN_WELCOME_COOLDOWN_SECONDS):
             title = render_template(str(config.get("welcome_title") or DEFAULT_GUILD_CONFIG["welcome_title"]), guild=member.guild, member=member)[:256]
             message = render_template(str(config.get("welcome_message") or DEFAULT_GUILD_CONFIG["welcome_message"]), guild=member.guild, member=member)[:4000]
             embed = make_branded_embed(config, title, message)
@@ -1880,25 +2420,50 @@ async def on_member_join(member: discord.Member):
 
 @tasks.loop(minutes=5)
 async def rotate_status():
-    if not ROTATING_STATUSES: return
-    status = ROTATING_STATUSES[rotate_status.current_loop % len(ROTATING_STATUSES)]
-    activity = discord.Activity(type=discord.ActivityType.watching, name=status[9:]) if status.lower().startswith("watching ") else discord.Game(name=status)
+    settings = await get_owner_settings()
+    interval = max(60, min(3600, int(settings.get("presence_interval_seconds") or 300)))
+    if abs(rotate_status.seconds - interval) > 1:
+        rotate_status.change_interval(seconds=interval)
+    if not settings.get("presence_enabled", True):
+        return
+    statuses = [str(x).strip() for x in settings.get("presence_statuses", []) if str(x).strip()]
+    if not statuses:
+        return
+    status = statuses[rotate_status.current_loop % len(statuses)]
+    kind = str(settings.get("presence_type") or "watching").lower()
+    activity_type = {
+        "watching": discord.ActivityType.watching,
+        "listening": discord.ActivityType.listening,
+        "competing": discord.ActivityType.competing,
+    }.get(kind)
+    activity = discord.Game(name=status) if kind == "playing" else discord.Activity(type=activity_type or discord.ActivityType.watching, name=status)
     await safe_change_presence(status=discord.Status.online, activity=activity)
 
 
 @tasks.loop(minutes=STATS_UPDATE_MINUTES)
 async def update_stats():
+    owner = await get_owner_settings()
+    stats_interval = max(5, min(360, int(owner.get("stats_interval_minutes") or STATS_UPDATE_MINUTES)))
+    if abs(update_stats.minutes - stats_interval) > 0.1:
+        update_stats.change_interval(minutes=stats_interval)
     if rate_limiter.is_globally_blocked():
         log.warning("Skipping stats update while Discord global cooldown/circuit breaker is active (%.0fs left)", rate_limiter.seconds_until_unblocked())
         return
     for guild in bot.guilds:
         config = await get_guild_config(guild.id)
+        if config.get("feature_stats") is False:
+            continue
         channels = config.get("stats_channels", {})
         humans = len([m for m in guild.members if not m.bot])
         bots = len([m for m in guild.members if m.bot])
         members = guild.member_count or len(guild.members)
         boosts = guild.premium_subscription_count or 0
-        stats = {"members": f"👥 Members: {members}", "humans": f"🧑 Humans: {humans}", "bots": f"🤖 Bots: {bots}", "boosts": f"🚀 Boosts: {boosts}"}
+        stats = {
+            "members": render_stat_name(config, "members", members, guild),
+            "humans": render_stat_name(config, "humans", humans, guild),
+            "bots": render_stat_name(config, "bots", bots, guild),
+            "boosts": render_stat_name(config, "boosts", boosts, guild),
+        }
         for key, name in stats.items():
             channel = guild.get_channel(channels.get(key) or 0)
             if isinstance(channel, discord.VoiceChannel) and channel.name != name:
@@ -1927,38 +2492,67 @@ async def self_ping():
 @guild_enabled_or_owner()
 async def ping(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
-    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Pong", f"Discord latency: `{round(bot.latency * 1000)}ms`", SUCCESS_COLOR), ephemeral=True)
+    latency_ms = round(bot.latency * 1000) if bot.latency else 0
+    template = str(config.get("ping_description") or "Discord latency: `{latency_ms}ms`")
+    description = template.replace("{latency_ms}", str(latency_ms))
+    uptime = utcnow() - STARTED_AT
+    embed = make_branded_embed(config, str(config.get("ping_title") or "System Online"), description, SUCCESS_COLOR)
+    embed.add_field(name="Status", value="🟢 Operational", inline=True)
+    embed.add_field(name="Uptime", value=f"{int(uptime.total_seconds() // 3600)}h {int((uptime.total_seconds() % 3600) // 60)}m", inline=True)
+    embed.add_field(name="Build", value=f"`{BUILD_VERSION}`", inline=True)
+    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="store", description="Get the store link.")
 @guild_enabled_or_owner()
 async def store(interaction: discord.Interaction):
-    config = await get_guild_config(interaction.guild.id) if interaction.guild else {"store_url": DEFAULT_STORE_URL}
-    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Store", f"Visit the store here:\n{config.get('store_url', DEFAULT_STORE_URL)}"), ephemeral=True)
+    config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
+    url = str(config.get("store_url") or DEFAULT_STORE_URL)
+    embed = make_branded_embed(config, str(config.get("store_title") or "moealturej Store"), str(config.get("store_description") or "Browse products, downloads, and account tools securely."))
+    embed.add_field(name="Store", value=f"[Open website]({url})", inline=False)
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label=str(config.get("store_button_label") or "Open Store")[:80], url=url, style=discord.ButtonStyle.link, emoji="🛍️"))
+    await safe_interaction_send(interaction, embed=embed, view=view, ephemeral=True)
 
 
 @bot.tree.command(name="help", description="Show available commands.")
+@guild_enabled_or_owner()
 async def help_command(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
-    embed = make_branded_embed(config, "Command Center", "Useful commands are grouped below so members can find what they need quickly.")
-    embed.add_field(name="Essentials", value="`/ping` latency • `/store` store link • `/serverinfo` server details • `/userinfo` member details • `/avatar` avatar", inline=False)
-    embed.add_field(name="Casino", value="`/casino` opens the moealturej web casino.", inline=False)
-    embed.add_field(name="Support", value="Use the server's Support Center panel to open a private ticket.", inline=False)
+    enabled = config.get("command_enabled") or {}
+    embed = make_branded_embed(config, str(config.get("help_title") or "Command Center"), str(config.get("help_description") or "Everything you need, organized in one place."))
+    public_groups = {
+        "Essentials": [("ping", "latency & status"), ("store", "store link"), ("serverinfo", "server overview"), ("userinfo", "member details"), ("avatar", "full-size avatar")],
+    }
+    for group, items in public_groups.items():
+        visible = [f"`/{name}` — {label}" for name, label in items if enabled.get(name, True) and config.get(command_feature_name(name) or "feature_utilities", True)]
+        if visible:
+            embed.add_field(name=group, value="\n".join(visible), inline=False)
+    if config.get("feature_tickets", True):
+        embed.add_field(name="Support", value="Use the server's **Support Center** panel to open a private ticket.", inline=False)
+    if isinstance(interaction.user, discord.Member) and member_is_command_admin(interaction.user, config) and config.get("feature_admin_commands", True):
+        embed.add_field(name="Staff", value="`/commands` opens the private administration command index. The web dashboard contains full configuration.", inline=False)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
-
 
 @bot.tree.command(name="commands", description="Show private owner/admin commands.")
 @admin_only()
 async def commands_menu(interaction: discord.Interaction):
     config = await get_guild_config(interaction.guild.id)
-    embed = make_branded_embed(config, "Admin Commands", "Private setup and operations commands.")
-    embed.add_field(name="Setup", value="`/setup_audit` `/setup_enable` `/set_admin_role` `/set_verified_role` `/set_unverified_role` `/set_auto_role` `/set_logs` `/set_ticket_category` `/set_ticket_role` `/stats_setup`", inline=False)
-    embed.add_field(name="Panels", value="`/send_verification_panel` `/send_ticket_panel`", inline=False)
-    embed.add_field(name="Content", value="`/set_store` `/announce` `/config_show`", inline=False)
-    embed.add_field(name="Moderation", value="`/purge` `/timeout` `/untimeout` `/warn` `/warnings` `/slowmode` `/lock` `/unlock`", inline=False)
-    embed.add_field(name="Dashboard", value=f"{PUBLIC_BASE_URL}/", inline=False)
-    await safe_interaction_send(interaction, embed=embed, ephemeral=True)
-
+    enabled = config.get("command_enabled") or {}
+    embed = make_branded_embed(config, "Administration", "Private command index. Feature and command availability can be changed from the dashboard.")
+    groups: Dict[str, list[str]] = {}
+    for name, meta in COMMAND_CATALOG.items():
+        if name in {"ping", "store", "help", "serverinfo", "userinfo", "avatar"}:
+            continue
+        if not enabled.get(name, True) and not is_owner_user(interaction.user.id):
+            continue
+        groups.setdefault(meta["group"], []).append(f"`/{name}`")
+    for group, names in groups.items():
+        embed.add_field(name=group, value=" ".join(names)[:1024], inline=False)
+    embed.add_field(name="Web control", value=f"[Open dashboard]({PUBLIC_BASE_URL}/guild/{interaction.guild.id})", inline=False)
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label="Open Dashboard", url=f"{PUBLIC_BASE_URL}/guild/{interaction.guild.id}", style=discord.ButtonStyle.link, emoji="⚙️"))
+    await safe_interaction_send(interaction, embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="setup_enable", description="Owner: enable or disable this bot in this server.")
 @admin_only()
@@ -2050,19 +2644,29 @@ async def send_ticket_panel(interaction: discord.Interaction, channel: discord.T
 @bot.tree.command(name="set_store", description="Set the store URL used by /store.")
 @admin_only()
 async def set_store(interaction: discord.Interaction, url: str):
-    await set_config(interaction.guild.id, {"store_url": url})
-    await safe_interaction_send(interaction, f"Store URL set to: {url}", ephemeral=True)
+    url = url.strip()
+    if not is_http_url(url):
+        return await safe_interaction_send(interaction, "Use a complete `https://` or `http://` store URL.", ephemeral=True)
+    await set_config(interaction.guild.id, {"store_url": url[:500]})
+    config = await get_guild_config(interaction.guild.id)
+    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Store updated", f"The `/store` destination is now:\n{url[:500]}", SUCCESS_COLOR), ephemeral=True)
 
 
 @bot.tree.command(name="announce", description="Send a clean announcement embed.")
 @admin_only()
 async def announce(interaction: discord.Interaction, channel: discord.TextChannel, title: str, message: str, image_url: Optional[str] = None):
     config = await get_guild_config(interaction.guild.id)
-    embed = make_branded_embed(config, title, message)
-    if image_url or config.get("announce_image"):
-        embed.set_image(url=image_url or config.get("announce_image"))
-    embed.set_footer(text=config.get("announce_footer") or "moealturej")
-    await safe_channel_send(channel, embed=embed)
+    resolved_image = str(image_url or config.get("announce_image") or "").strip()[:500]
+    if resolved_image and not is_http_url(resolved_image):
+        return await safe_interaction_send(interaction, "The announcement image must be a complete `http://` or `https://` URL.", ephemeral=True)
+    embed = make_branded_embed(config, title[:256], message[:4000])
+    if resolved_image:
+        embed.set_image(url=resolved_image)
+    embed.set_footer(text=str(config.get("announce_footer") or config.get("brand_footer") or "moealturej")[:2048])
+    sent = await safe_channel_send(channel, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    if not sent:
+        return await safe_interaction_send(interaction, "Discord could not send that announcement right now. Check the channel permissions and try again.", ephemeral=True)
+    await log_command_event(interaction, "announce", channel=channel.id, title=title[:120])
     await safe_interaction_send(interaction, f"Announcement sent in {channel.mention}.", ephemeral=True)
 
 
@@ -2071,14 +2675,17 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
 async def stats_setup(interaction: discord.Interaction, category: Optional[discord.CategoryChannel] = None):
     await safe_interaction_defer(interaction, ephemeral=True)
     guild = interaction.guild
+    config = await get_guild_config(guild.id)
+    if category is None and config.get("stats_category"):
+        existing_category = guild.get_channel(int(config.get("stats_category") or 0))
+        category = existing_category if isinstance(existing_category, discord.CategoryChannel) else None
     if category is None:
         category = await safe_create_category(guild, "📊 Server Stats", reason="Live server stats setup")
     if category is None:
         return await safe_interaction_send(interaction, "Discord is busy right now. Please try stats setup again in a minute.", ephemeral=True)
     overwrites = {guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True), guild.me: discord.PermissionOverwrite(connect=True, manage_channels=True, view_channel=True)}
-    defaults = {"members": "👥 Members: 0", "humans": "🧑 Humans: 0", "bots": "🤖 Bots: 0", "boosts": "🚀 Boosts: 0"}
+    defaults = {key: render_stat_name(config, key, 0, guild) for key in ("members", "humans", "bots", "boosts")}
     created = {}
-    config = await get_guild_config(guild.id)
     for key, name in defaults.items():
         channel = guild.get_channel((config.get("stats_channels") or {}).get(key) or 0)
         if not isinstance(channel, discord.VoiceChannel):
@@ -2099,25 +2706,6 @@ async def config_show(interaction: discord.Interaction):
         embed.add_field(name=key, value=str(config.get(key)), inline=True)
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
-# =========================
-# EXTERNAL CASINO LINK
-# =========================
-@bot.tree.command(name="casino", description="Open the moealturej web casino.")
-@app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
-@guild_enabled_or_owner()
-async def casino(interaction: discord.Interaction):
-    config = await get_guild_config(interaction.guild.id) if interaction.guild else DEFAULT_GUILD_CONFIG
-    embed = make_branded_embed(
-        config,
-        "moealturej Casino",
-        f"Play on the website: [Open the casino]({CASINO_URL})",
-        INFO_COLOR,
-    )
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Open Casino", url=CASINO_URL, style=discord.ButtonStyle.link, emoji="🎰"))
-    await safe_interaction_send(interaction, embed=embed, view=view)
-
-
 @bot.tree.command(name="setup_audit", description="Check permissions, role hierarchy, channels, and production configuration.")
 @admin_only()
 async def setup_audit(interaction: discord.Interaction):
@@ -2126,35 +2714,61 @@ async def setup_audit(interaction: discord.Interaction):
     me = guild.me
     issues: list[str] = []
     passed: list[str] = []
-    required_permissions = {
-        "Manage Roles": me.guild_permissions.manage_roles,
-        "Manage Channels": me.guild_permissions.manage_channels,
-        "Send Messages": me.guild_permissions.send_messages,
-        "Embed Links": me.guild_permissions.embed_links,
-        "Attach Files": me.guild_permissions.attach_files,
-        "Read Message History": me.guild_permissions.read_message_history,
-    }
-    for label, ok in required_permissions.items():
-        (passed if ok else issues).append(f"{'✅' if ok else '❌'} {label}")
-    verified_role = guild.get_role(int(config.get("verified_role") or 0))
-    if not verified_role:
-        issues.append("❌ Verified role is not configured")
-    elif verified_role >= me.top_role:
-        issues.append("❌ Verified role must be below the bot's highest role")
+    if me is None:
+        return await safe_interaction_send(interaction, "I could not resolve my server member record. Try again after Discord finishes caching this server.", ephemeral=True)
+
+    checks: list[tuple[str, bool, bool]] = [
+        ("Send Messages", me.guild_permissions.send_messages, True),
+        ("Embed Links", me.guild_permissions.embed_links, True),
+        ("Manage Roles", me.guild_permissions.manage_roles, bool(config.get("feature_verification", True) or config.get("feature_welcome", True))),
+        ("Manage Channels", me.guild_permissions.manage_channels, bool(config.get("feature_tickets", True) or config.get("feature_stats", True))),
+        ("Attach Files", me.guild_permissions.attach_files, bool(config.get("feature_tickets", True))),
+        ("Read Message History", me.guild_permissions.read_message_history, bool(config.get("feature_tickets", True))),
+        ("Manage Messages", me.guild_permissions.manage_messages, bool(config.get("feature_moderation", True))),
+        ("Moderate Members", me.guild_permissions.moderate_members, bool(config.get("feature_moderation", True))),
+    ]
+    for label, ok, needed in checks:
+        if not needed:
+            passed.append(f"➖ {label} not required by enabled modules")
+        elif ok:
+            passed.append(f"✅ {label}")
+        else:
+            issues.append(f"❌ {label}")
+
+    if config.get("feature_verification", True):
+        verified_role = guild.get_role(int(config.get("verified_role") or 0))
+        if not verified_role:
+            issues.append("❌ Verified role is not configured")
+        elif verified_role >= me.top_role:
+            issues.append("❌ Verified role must be below the bot's highest role")
+        else:
+            passed.append("✅ Verified role hierarchy")
+        if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
+            issues.append("❌ Discord OAuth environment values are missing")
+        else:
+            passed.append("✅ OAuth environment values")
     else:
-        passed.append("✅ Verified role hierarchy")
-    if not isinstance(guild.get_channel(int(config.get("ticket_category") or 0)), discord.CategoryChannel):
-        issues.append("❌ Ticket category is not configured")
+        passed.append("➖ Verification module disabled")
+
+    if config.get("feature_tickets", True):
+        if not isinstance(guild.get_channel(int(config.get("ticket_category") or 0)), discord.CategoryChannel):
+            issues.append("❌ Ticket category is not configured")
+        else:
+            passed.append("✅ Ticket category")
     else:
-        passed.append("✅ Ticket category")
-    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
-        issues.append("❌ Discord OAuth environment values are missing")
-    else:
-        passed.append("✅ OAuth environment values")
-    embed = make_branded_embed(config, "Production Setup Audit", "Fix the red items before sending public panels.", SUCCESS_COLOR if not issues else WARNING_COLOR)
-    embed.add_field(name="Ready", value="\n".join(passed) or "None yet", inline=False)
-    embed.add_field(name="Needs attention", value="\n".join(issues) or "✅ No blocking issues found", inline=False)
-    embed.add_field(name="Dashboard", value=PUBLIC_BASE_URL, inline=False)
+        passed.append("➖ Ticket module disabled")
+
+    owner = await get_owner_settings()
+    if owner.get("global_pause"):
+        issues.append("⚠️ Global maintenance mode is currently enabled")
+    if not config.get("enabled") and not is_owner_user(interaction.user.id):
+        issues.append("⚠️ This server is currently owner-only")
+
+    embed = make_branded_embed(config, "Production Setup Audit", "Checks are scoped to the modules currently enabled for this server.", SUCCESS_COLOR if not issues else WARNING_COLOR)
+    embed.add_field(name="Ready / not required", value="\n".join(passed)[:1024] or "None yet", inline=False)
+    embed.add_field(name="Needs attention", value="\n".join(issues)[:1024] or "✅ No blocking issues found", inline=False)
+    embed.add_field(name="Dashboard", value=f"{PUBLIC_BASE_URL}/guild/{guild.id}", inline=False)
+    await log_command_event(interaction, "setup_audit", issue_count=len(issues))
     await safe_interaction_send(interaction, embed=embed, ephemeral=True)
 
 
@@ -2273,7 +2887,8 @@ async def purge(interaction: discord.Interaction, amount: app_commands.Range[int
     if not isinstance(interaction.channel, discord.TextChannel):
         return await safe_interaction_send(interaction, "Use this in a text channel.", ephemeral=True)
     await safe_interaction_defer(interaction, ephemeral=True)
-    amount = min(int(amount), MAX_PURGE_AMOUNT)
+    owner = await get_owner_settings()
+    amount = min(int(amount), max(1, min(100, int(owner.get("max_purge_amount") or MAX_PURGE_AMOUNT))))
     deleted = await discord_guarded("purge messages", f"purge:{interaction.channel.id}", lambda: interaction.channel.purge(limit=amount, reason=f"Purged by {interaction.user}"), min_gap=3.0, default=[])
     await log_command_event(interaction, "purge", channel=interaction.channel.id, amount=len(deleted or []))
     await safe_interaction_send(interaction, f"Deleted **{len(deleted or [])}** messages.", ephemeral=True)
@@ -2292,7 +2907,10 @@ async def timeout_member(interaction: discord.Interaction, member: discord.Membe
     if not ok:
         return await safe_interaction_send(interaction, "The timeout failed. Check role order and permissions.", ephemeral=True)
     await log_moderation(interaction.guild, interaction.user, "timeout", member, reason)
-    await safe_interaction_send(interaction, f"Timed out {member.mention} for **{minutes} minutes**.", ephemeral=True)
+    config = await get_guild_config(interaction.guild.id)
+    if config.get("moderation_dm_timeout", True):
+        await safe_user_send(member, embed=make_branded_embed(config, f"Timeout in {interaction.guild.name}", f"You were timed out for **{minutes} minute(s)**.\n\n**Reason:** {reason}", ERROR_COLOR), allowed_mentions=discord.AllowedMentions.none())
+    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Timeout applied", f"{member.mention} was timed out for **{minutes} minute(s)**.\n\n**Reason:** {reason}", SUCCESS_COLOR), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.tree.command(name="untimeout", description="Remove a member's timeout.")
@@ -2315,8 +2933,9 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     count = await mdb.warnings.count_documents({"guild_id": interaction.guild.id, "user_id": member.id})
     await log_moderation(interaction.guild, interaction.user, "warn", member, reason)
     config = await get_guild_config(interaction.guild.id)
-    await safe_user_send(member, embed=make_branded_embed(config, f"Warning in {interaction.guild.name}", reason, ERROR_COLOR))
-    await safe_interaction_send(interaction, f"Warned {member.mention}. They now have **{count}** warning(s).", ephemeral=True)
+    if config.get("moderation_dm_warn", True):
+        await safe_user_send(member, embed=make_branded_embed(config, f"Warning in {interaction.guild.name}", reason, ERROR_COLOR), allowed_mentions=discord.AllowedMentions.none())
+    await safe_interaction_send(interaction, embed=make_branded_embed(config, "Warning recorded", f"{member.mention} now has **{count}** warning(s).\n\n**Reason:** {reason}", SUCCESS_COLOR), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.tree.command(name="warnings", description="View recorded warnings for a member.")
