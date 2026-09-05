@@ -26,7 +26,7 @@ A complete Discord server-management bot with a private owner-only web dashboard
 2. Enable **Server Members Intent** and **Message Content Intent** in the Bot page.
 3. Invite the bot with `bot` + `applications.commands` scopes.
 4. Give it permissions needed for the enabled features: Manage Roles, Manage Channels, Manage Messages, Moderate Members, Kick Members, Ban Members, View Channels, Send Messages, Read Message History, Embed Links, Attach Files.
-5. Add your dashboard OAuth redirect URL exactly, e.g. `https://your-domain.com/oauth/callback`.
+5. Add your Discord OAuth redirect URL exactly, preferably `https://your-domain.com/oauth/callback`. The app also accepts `/verify/callback` for compatibility.
 6. Keep the bot role above any roles it must add/remove.
 
 ## Setup
@@ -48,7 +48,7 @@ On macOS/Linux use `source .venv/bin/activate` and `cp .env.example .env`.
 - `DISCORD_CLIENT_ID`: application client ID.
 - `DISCORD_CLIENT_SECRET`: application OAuth client secret.
 - `OWNER_ID`: only this Discord account may use the dashboard.
-- `OAUTH_REDIRECT_URI`: exact callback registered in Discord, ending in `/oauth/callback`.
+- `OAUTH_REDIRECT_URI`: exact callback registered in Discord. Prefer `/oauth/callback`; `/verify/callback` is also supported.
 - `DASHBOARD_BASE_URL`: public dashboard base URL; verification panel links use this.
 - `SECRET_KEY`: long random secret. Example generator: `python -c "import secrets; print(secrets.token_hex(48))"`.
 - `MONGODB_URI`: recommended on Render/production. Leave blank for local SQLite.

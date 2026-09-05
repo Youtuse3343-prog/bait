@@ -36,7 +36,7 @@ def create_app(bot, keep_alive=None):
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net https://www.moealturej.com https://moealturej.com data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
         if request.is_secure:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
@@ -143,6 +143,7 @@ def create_app(bot, keep_alive=None):
         return redirect(url_for("index"))
 
     @app.get("/oauth/callback")
+    @app.get("/verify/callback")
     def oauth_callback():
         rate_limit("oauth-callback", 30, 60)
         code = request.args.get("code", "")
