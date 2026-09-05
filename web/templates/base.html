@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#08070d">
   <meta name="color-scheme" content="dark">
   <title>{% block title %}moealturej · Bot Control{% endblock %}</title>
-  <link rel="icon" href="https://www.moealturej.com/static/logo.png">
+  <link rel="icon" href="{{ url_for('brand_logo') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body>
@@ -19,7 +19,7 @@
   <header class="topbar">
     <div class="topbar-inner">
       <a class="brand" href="{{ url_for('dashboard') if session.get('owner_id') else url_for('index') }}" aria-label="moealturej Bot Control">
-        <span class="brand-logo-wrap"><img class="brand-logo" src="https://www.moealturej.com/static/logo.png" alt="moealturej logo"></span>
+        <span class="brand-logo-wrap"><img class="brand-logo" src="{{ url_for('brand_logo') }}" alt="moealturej logo"></span>
         <span class="brand-copy">
           <strong>moealturej</strong>
           <small>Bot Control</small>
@@ -67,7 +67,7 @@
 
   <footer class="footer">
     <div class="footer-inner">
-      <div class="footer-brand"><img src="https://www.moealturej.com/static/logo.png" alt=""><span>moealturej Bot Control</span></div>
+      <div class="footer-brand"><img src="{{ url_for('brand_logo') }}" alt=""><span>moealturej Bot Control</span></div>
       <span>Private control plane · Owner protected</span>
     </div>
   </footer>

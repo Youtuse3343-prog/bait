@@ -8,7 +8,7 @@ from functools import wraps
 from urllib.parse import urlencode
 
 import requests
-from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from bot.config import settings
@@ -36,7 +36,7 @@ def create_app(bot, keep_alive=None):
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net https://www.moealturej.com https://moealturej.com data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
         if request.is_secure:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
@@ -114,6 +114,38 @@ def create_app(bot, keep_alive=None):
         if not guild:
             abort(404)
         return guild
+
+    logo_cache = {"body": None, "content_type": "image/png", "fetched_at": 0.0}
+
+    @app.get("/brand/logo.png")
+    def brand_logo():
+        """Serve the moealturej logo same-origin so browser CORP/ORB rules cannot block it."""
+        now = time.time()
+        # Keep a successful copy in memory for 24 hours. This also prevents every
+        # dashboard render from making another request to the public website.
+        if logo_cache["body"] is None or now - logo_cache["fetched_at"] > 86400:
+            try:
+                upstream = requests.get(
+                    "https://www.moealturej.com/static/logo.png",
+                    headers={"User-Agent": "moealturej-bot-dashboard/1.0"},
+                    timeout=8,
+                )
+                upstream.raise_for_status()
+                content_type = upstream.headers.get("Content-Type", "image/png").split(";", 1)[0].strip()
+                if not content_type.startswith("image/"):
+                    raise requests.RequestException("Logo endpoint did not return an image")
+                logo_cache["body"] = upstream.content
+                logo_cache["content_type"] = content_type
+                logo_cache["fetched_at"] = now
+            except requests.RequestException:
+                # If we already have a cached copy, keep serving it during a temporary
+                # upstream outage. Only fail when no successful copy exists yet.
+                if logo_cache["body"] is None:
+                    abort(502, "Brand logo is temporarily unavailable.")
+
+        response = Response(logo_cache["body"], mimetype=logo_cache["content_type"] or "image/png")
+        response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+        return response
 
     @app.get("/health")
     def health():

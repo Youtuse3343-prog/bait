@@ -3,7 +3,7 @@
 {% block content %}
 <section class="verify-shell">
   <div class="verify-card">
-    <div class="verify-brand"><img src="https://www.moealturej.com/static/logo.png" alt="moealturej"><span>Secure Verification</span></div>
+    <div class="verify-brand"><img src="{{ url_for('brand_logo') }}" alt="moealturej"><span>Secure Verification</span></div>
     <div class="guild-identity">
       {% if guild.icon %}<img class="guild-icon verify-guild-icon" src="{{ guild.icon.url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon verify-guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
       <div><small>YOU ARE VERIFYING FOR</small><h1>{{ guild.name }}</h1></div>
