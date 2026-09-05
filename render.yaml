@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: professional-discord-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SYNC_COMMANDS_ON_START
+        value: "true"

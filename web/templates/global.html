@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Global Settings · Bot Control{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">GLOBAL BOT SETTINGS</div><h1>Global controls</h1><p>These settings affect the bot account and dashboard globally, not one server.</p></div></div>
+<form method="post" class="stack">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="section" value="settings">
+  <section class="panel">
+    <div class="panel-head"><div><h2>Presence rotation</h2><p>Cycle through up to eight presence entries.</p></div></div>
+    <div class="field narrow"><label>Rotation interval (seconds)</label><input name="status_interval" type="number" min="15" max="3600" value="{{ cfg.status_interval_seconds }}"></div>
+    <div class="status-list">
+      {% for i in range(1,9) %}
+      {% set item = cfg.statuses[i-1] if cfg.statuses|length >= i else {} %}
+      <div class="status-row">
+        <select name="status_type_{{ i }}">
+          {% for kind in ['playing','watching','listening','competing','streaming'] %}<option value="{{ kind }}" {% if item.get('type') == kind %}selected{% endif %}>{{ kind|title }}</option>{% endfor %}
+        </select>
+        <input name="status_text_{{ i }}" maxlength="128" placeholder="Status text" value="{{ item.get('text','') }}">
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Dashboard keep-alive</h2><p>Periodically pings this dashboard's health endpoint while the process is running.</p></div></div>
+    <label class="check-row">
+      <input type="checkbox" name="keep_alive_enabled" {% if cfg.keep_alive.enabled %}checked{% endif %}>
+      <span><strong>Enable self-ping</strong><small>Uses only your configured DASHBOARD_BASE_URL + /health.</small></span>
+    </label>
+    <div class="field narrow"><label>Ping interval (seconds)</label><input name="keep_alive_interval" type="number" min="60" max="3600" value="{{ cfg.keep_alive.interval_seconds }}"><small>Minimum 60 seconds. 300 seconds (5 minutes) is recommended.</small></div>
+    {% if keep_alive_state %}
+    <div class="info-grid">
+      <div><span class="eyebrow">TARGET</span><strong>{{ keep_alive_state.target_url }}</strong></div>
+      <div><span class="eyebrow">WORKER</span><strong>{{ 'Running' if keep_alive_state.running else 'Stopped' }}</strong></div>
+      <div><span class="eyebrow">LAST ATTEMPT</span><strong>{{ keep_alive_state.last_attempt or 'Not yet' }}</strong></div>
+      <div><span class="eyebrow">LAST RESULT</span><strong>{% if keep_alive_state.last_status %}HTTP {{ keep_alive_state.last_status }}{% elif keep_alive_state.last_error %}{{ keep_alive_state.last_error }}{% else %}Not yet{% endif %}</strong></div>
+    </div>
+    {% endif %}
+  </section>
+  <div class="savebar"><span>Changes are picked up by the live process.</span><button class="button primary" type="submit">Save global settings</button></div>
+</form>
+
+<form method="post" class="stack" style="margin-top:12px">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="section" value="ping_now">
+  <div class="savebar"><span>Test the configured health URL immediately.</span><button class="button" type="submit">Ping now</button></div>
+</form>
+{% endblock %}

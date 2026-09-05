@@ -1,106 +1,91 @@
-# moealturej Discord Bot — Production Build 4.0
+# Professional Discord Bot + Owner Dashboard
 
-Private Discord operations bot and web control panel built with `discord.py`, `aiohttp`, and MongoDB. Build 4.0 overhauls the dashboard and bot presentation around the black/purple moealturej website theme, adds owner-level global control, per-server feature and command switches, safer message tools, and stronger production safeguards.
+A complete Discord server-management bot with a private owner-only web dashboard.
 
-## What changed in 4.0
+## Included
 
-- Full dashboard visual overhaul matching the moealturej site: black surfaces, purple accent, compact navigation, responsive cards, cleaner forms, sticky save controls, and consistent preview components.
-- New **Owner** control center for global branding, website links, presence rotation, maintenance mode, statistics interval, purge limits, and dashboard tools.
-- New **Command Center** for enabling/disabling entire feature modules and individual slash commands per server.
-- Per-server customization for branding, verification, welcome flow, support tickets, moderation behavior, log channels, live statistics, announcements, public command copy, and store buttons.
-- Announcement/embed/DM composers now use server branding, validate image URLs, suppress mentions by default, and include live previews.
-- Ticket transcripts redesigned to match the dashboard, with portable escaped HTML, message/attachment counts, responsive layout, and server brand color.
-- Dashboard activity center combines recent bot errors, moderation actions, ticket activity, verification activity, and dashboard operations.
-- Production hardening: signed sessions, signed double-submit CSRF protection, cross-origin write checks, security headers, no-store HTML caching, rate-limit guards, cooldowns, incident IDs, input limits, safe URL handling, and owner bypass protection against accidental lockout.
-- Fixed a production-critical dashboard parser issue that could clamp real Discord snowflake IDs because Discord IDs exceed normal 32-bit/8-digit ranges.
+- Tickets: configurable panel, private channels, support role access, claim, close, transcript logging.
+- Announcements: slash command + dashboard send.
+- Welcome system: channel messages, variables, optional DM.
+- Auto-role on join.
+- Discord OAuth verification: identity-only OAuth flow, remove one role + add another role after verification.
+- Bot DMs: slash command + owner dashboard.
+- Status rotation: configurable presence type/text and interval.
+- Automatic recurring messages: per-server schedule and on/off feature switch.
+- Moderation: warnings, warning history, clear warnings, purge, timeout/untimeout, kick, ban/unban, slowmode, lock/unlock.
+- Logs / mod logs: joins, leaves, deleted/edited messages, role changes, nickname changes, moderation actions, tickets, verification.
+- General commands: `/ping`, `/userinfo`, `/avatar`, `/serverinfo`, `/botinfo`, `/help`.
+- Command cleanup: startup sync replaces stale global commands with the current tree; owner `/synccommands` supports guild/global sync.
+- Per-server feature switches for tickets, announcements, welcome, autorole, verification, moderation, logs, auto-messages and bot DMs.
+- MongoDB production persistence with SQLite fallback for local development.
+- Owner-only dashboard secured by Discord OAuth + exact `OWNER_ID` match, OAuth state validation, CSRF protection, secure cookie options and security headers.
 
-## Dashboard areas
+## Required Discord Developer Portal settings
 
-| Route | Purpose |
-| --- | --- |
-| `/` | Login / server overview / health metrics |
-| `/owner` | Global owner-only configuration |
-| `/guild/{guild_id}` | Complete server configuration |
-| `/guild/{guild_id}/commands` | Feature modules, individual command switches, public command copy |
-| `/guild/{guild_id}/announcements` | Announcement composer |
-| `/guild/{guild_id}/embeds` | General embed composer |
-| `/guild/{guild_id}/dms` | Controlled private DM composer |
-| `/guild/{guild_id}/activity` | Operations, moderation, ticket, verification, and error history |
-| `/status` | Branded HTML runtime status page |
-| `/health` | JSON health/readiness endpoint |
-| `/verify/start` + `/verify/callback` | OAuth verification flow |
+1. Create a Discord application and bot.
+2. Enable **Server Members Intent** and **Message Content Intent** in the Bot page.
+3. Invite the bot with `bot` + `applications.commands` scopes.
+4. Give it permissions needed for the enabled features: Manage Roles, Manage Channels, Manage Messages, Moderate Members, Kick Members, Ban Members, View Channels, Send Messages, Read Message History, Embed Links, Attach Files.
+5. Add your dashboard OAuth redirect URL exactly, e.g. `https://your-domain.com/oauth/callback`.
+6. Keep the bot role above any roles it must add/remove.
 
-The dashboard is owner-only by default. Set `DASHBOARD_OWNER_ONLY=false` if you want Discord server owners or members with **Manage Server** to manage only servers they are authorized for.
-
-## Command groups
-
-Build 4.0 exposes 32 slash commands across essentials, administration, verification, welcome, support tickets, announcements, live statistics, utilities, and moderation. Every command is represented in the Command Center and can be individually disabled without removing it from Discord.
-
-The owner account can still use disabled commands so you cannot accidentally lock yourself out of recovery/configuration operations.
-
-## Required environment variables
-
-Copy `.env.example` to `.env` for local development. At minimum set:
-
-- `BOT_TOKEN`
-- `DISCORD_CLIENT_ID`
-- `DISCORD_CLIENT_SECRET`
-- `OWNER_USER_ID`
-- `MONGO_URI`
-- `DASHBOARD_SECRET` — use a long random value (32+ bytes recommended)
-- `PUBLIC_BASE_URL` — exact public HTTPS origin in production, no trailing slash
-
-Never commit `.env`, bot tokens, OAuth secrets, MongoDB credentials, or dashboard secrets.
-
-## Discord Developer Portal
-
-Add these OAuth redirect URLs using the same host as `PUBLIC_BASE_URL`:
-
-- `https://YOUR-DOMAIN/oauth/callback`
-- `https://YOUR-DOMAIN/verify/callback`
-
-Enable **Server Members Intent**. Enable **Message Content Intent** if you want full ticket transcript message content.
-
-Recommended bot permissions depend on enabled modules, but a full setup commonly needs Manage Roles, Manage Channels, Manage Messages, Moderate Members, Send Messages, Embed Links, Attach Files, Read Message History, and View Channels. Keep the bot role above every role it needs to assign/remove.
-
-## Render deployment
-
-1. Push the project to the repository connected to Render.
-2. Create a **Web Service**. The included `Procfile` runs `python bot.py`.
-3. Add values from `.env.example` as Render Environment Variables.
-4. Set `PUBLIC_BASE_URL` to the exact HTTPS service/custom-domain URL.
-5. Add the matching Discord OAuth redirect URLs.
-6. Deploy with `SYNC_COMMANDS=true` once when command definitions change. This is required after this update so Discord removes any stale slash-command registrations that no longer exist in the code.
-7. Confirm the logs report a successful slash-command sync, then set `SYNC_COMMANDS=false` and redeploy.
-8. Open `/health`, then run `/setup_audit` in each configured Discord server.
-9. Configure the remaining settings from `/owner` and each server's dashboard page.
-
-The app starts its web health server before Discord login, so temporary Discord/Cloudflare login rate limits do not force a Render restart loop.
-
-## Local development
+## Setup
 
 ```bash
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-# source .venv/bin/activate
-
-python -m pip install -r requirements.txt
-copy .env.example .env   # Windows
-# cp .env.example .env   # macOS/Linux
-python preflight.py
-python -m compileall -q .
-python bot.py
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+copy .env.example .env        # Windows
+# edit .env
+python main.py
 ```
+
+On macOS/Linux use `source .venv/bin/activate` and `cp .env.example .env`.
+
+## Important `.env` values
+
+- `DISCORD_TOKEN`: bot token.
+- `DISCORD_CLIENT_ID`: application client ID.
+- `DISCORD_CLIENT_SECRET`: application OAuth client secret.
+- `OWNER_ID`: only this Discord account may use the dashboard.
+- `OAUTH_REDIRECT_URI`: exact callback registered in Discord, ending in `/oauth/callback`.
+- `DASHBOARD_BASE_URL`: public dashboard base URL; verification panel links use this.
+- `SECRET_KEY`: long random secret. Example generator: `python -c "import secrets; print(secrets.token_hex(48))"`.
+- `MONGODB_URI`: recommended on Render/production. Leave blank for local SQLite.
+- `SESSION_COOKIE_SECURE=true`: set this in production behind HTTPS.
+- `DEV_GUILD_ID`: optional testing server ID. If set, slash sync targets that guild instantly instead of global registration.
+
+## First-use flow
+
+1. Start the bot.
+2. Open the dashboard and sign in with the same Discord account as `OWNER_ID`.
+3. Select a server and configure channels + roles.
+4. Save feature switches and messages.
+5. Run `/ticketpanel` in a server to post the ticket panel.
+6. Run `/verificationpanel` to post the Discord OAuth verification link.
+7. If you previously had old slash commands, run `/synccommands global`; the current tree becomes the registered global command set.
 
 ## Production notes
 
-- Owner/global defaults are stored in MongoDB and apply immediately after saving.
-- Existing guild and owner documents are migrated to the current schema: missing defaults are added and obsolete configuration keys are pruned automatically.
-- Message tools intentionally suppress Discord mentions unless an announcement operator explicitly enables them for that send.
-- Dashboard image URLs accept only complete `http://` or `https://` URLs.
-- Ticket transcripts escape message/embed text before rendering to HTML.
-- `/purge` is capped by the owner-configurable maximum, with a hard ceiling of 100.
+- Use MongoDB on hosts with ephemeral disks.
+- Use HTTPS and `SESSION_COOKIE_SECURE=true`.
+- Never commit `.env` or expose `DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `SECRET_KEY`, or `MONGODB_URI`.
+- Restrict dashboard ingress further at your reverse proxy/firewall if you want IP-level protection in addition to Discord owner authentication.
+- The dashboard only allows a Discord user whose ID exactly matches `OWNER_ID`; other successful OAuth identities are rejected.
 
-See `CHANGELOG_4.0.md` for the upgrade breakdown and `preflight.py` for a safe environment/configuration check.
+## Customization placeholders
+
+Welcome/ticket messages support `{mention}`, `{user}`, `{user_id}`, `{server}`, `{server_id}`, and `{member_count}` where relevant.
+
+## Dashboard self keep-alive
+
+The owner dashboard now includes **Global → Dashboard keep-alive**. It can periodically request the bot's own `DASHBOARD_BASE_URL/health` endpoint and includes a **Ping now** test button.
+
+1. Set `DASHBOARD_BASE_URL` to the public URL of the running service (for example `https://your-service.onrender.com`). Do not include `/health`.
+2. Open **Dashboard → Global**.
+3. Enable **Self-ping**, choose an interval (300 seconds / 5 minutes is a sensible default), and save.
+4. Use **Ping now** to verify the public health URL returns HTTP 2xx.
+
+The ping target is intentionally not editable in the browser; it is locked to this app's own `/health` route to avoid turning the dashboard into an arbitrary URL requester.
+
+**Hosting note:** a self-ping thread only runs while your process is already running. If a hosting provider fully suspends/stops the process, the thread cannot wake itself. On hosts that suspend free services regardless of self-traffic, use the host's always-on plan or an external uptime monitor instead. The existing `render.yaml` also exposes `/health` as the Render health check path.

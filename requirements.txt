@@ -1,5 +1,6 @@
-discord.py>=2.4.0,<3.0.0
-aiohttp>=3.9.0,<4.0.0
-python-dotenv>=1.0.1,<2.0.0
-motor>=3.6.0,<4.0.0
-pymongo>=4.9.0,<5.0.0
+discord.py>=2.4,<3
+Flask>=3.0,<4
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+pymongo>=4.6,<5
+waitress>=3.0,<4

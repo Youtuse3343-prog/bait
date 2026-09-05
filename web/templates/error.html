@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Error · Bot Control{% endblock %}
+{% block content %}
+<section class="center-card compact">
+  <div class="eyebrow danger-text">REQUEST BLOCKED</div>
+  <h1>Couldn’t continue.</h1>
+  <p>{{ message }}</p>
+  <a class="button" href="{{ url_for('index') }}">Back</a>
+</section>
+{% endblock %}

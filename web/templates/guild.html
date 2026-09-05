@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ guild.name }} · Bot Control{% endblock %}
+{% macro channel_select(name, selected) %}
+<select name="channel_{{ name }}"><option value="">Not set</option>{% for c in channels %}{% if (name == 'ticket_category' and c.type.name == 'category') or (name != 'ticket_category' and c.type.name in ['text','news']) %}<option value="{{ c.id }}" {% if selected and selected|string == c.id|string %}selected{% endif %}>{% if c.type.name == 'category' %}Category: {% else %}# {% endif %}{{ c.name }}</option>{% endif %}{% endfor %}</select>
+{% endmacro %}
+{% macro role_select(name, selected) %}
+<select name="role_{{ name }}"><option value="">Not set</option>{% for r in roles %}<option value="{{ r.id }}" {% if selected and selected|string == r.id|string %}selected{% endif %}>@{{ r.name }}</option>{% endfor %}</select>
+{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="guild-title">{% if guild.icon %}<img class="guild-icon" src="{{ guild.icon.url }}" alt="">{% endif %}<div><div class="eyebrow">SERVER CONTROL</div><h1>{{ guild.name }}</h1><p>{{ guild.member_count }} members · {{ guild.id }}</p></div></div>
+  <a class="button" href="{{ url_for('dashboard') }}">← All servers</a>
+</div>
+<form method="post" class="stack">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="settings">
+  <section class="panel">
+    <div class="panel-head"><div><h2>Feature switches</h2><p>Enable or disable systems independently for this server.</p></div><span class="badge">Per-server</span></div>
+    <div class="toggle-grid">
+      {% for key, enabled in cfg.features.items() %}<label class="toggle-card"><span><strong>{{ key.replace('_',' ')|title }}</strong><small>{{ 'Enabled' if enabled else 'Disabled' }}</small></span><input type="checkbox" name="feature_{{ key }}" {% if enabled %}checked{% endif %}><i></i></label>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Channels</h2><p>Route every system to the right place.</p></div></div>
+    <div class="form-grid">
+      {% for key, selected in cfg.channels.items() %}<div class="field"><label>{{ key.replace('_',' ')|title }}</label>{{ channel_select(key, selected) }}</div>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Roles</h2><p>Auto-role, verification transitions and ticket staff.</p></div></div>
+    <div class="form-grid">
+      {% for key, selected in cfg.roles.items() %}<div class="field"><label>{{ key.replace('_',' ')|title }}</label>{{ role_select(key, selected) }}</div>{% endfor %}
+    </div>
+    <div class="hint">For verification, the bot removes <b>Verification Remove</b> and adds <b>Verification Add</b>. Keep the bot role above both roles.</div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Welcome system</h2><p>Variables: <code>{mention}</code>, <code>{user}</code>, <code>{server}</code>, <code>{member_count}</code>.</p></div></div>
+    <div class="field"><label>Public welcome message</label><textarea name="welcome_content">{{ cfg.welcome.content }}</textarea></div>
+    <label class="checkline"><input type="checkbox" name="welcome_dm_enabled" {% if cfg.welcome.dm_enabled %}checked{% endif %}> Send a private welcome DM too</label>
+    <div class="field"><label>Welcome DM</label><textarea name="welcome_dm_content">{{ cfg.welcome.dm_content }}</textarea></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Ticket system</h2><p>Customize the panel and ticket opener shown to users.</p></div></div>
+    <div class="form-grid">
+      <div class="field"><label>Panel title</label><input name="ticket_panel_title" value="{{ cfg.tickets.panel_title }}"></div>
+      <div class="field"><label>Button label</label><input name="ticket_button_label" value="{{ cfg.tickets.button_label }}"></div>
+    </div>
+    <div class="field"><label>Panel description</label><textarea name="ticket_panel_description">{{ cfg.tickets.panel_description }}</textarea></div>
+    <div class="field"><label>Opening message</label><textarea name="ticket_opening_message">{{ cfg.tickets.opening_message }}</textarea></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Discord OAuth verification</h2><p>Users authorize identity scope, then configured roles are swapped by the bot.</p></div></div>
+    <div class="form-grid">
+      <div class="field"><label>Panel title</label><input name="verification_panel_title" value="{{ cfg.verification.panel_title }}"></div>
+      <div class="field"><label>Button label</label><input name="verification_button_label" value="{{ cfg.verification.button_label }}"></div>
+    </div>
+    <div class="field"><label>Panel description</label><textarea name="verification_panel_description">{{ cfg.verification.panel_description }}</textarea></div>
+    <div class="field"><label>Success message</label><input name="verification_success_message" value="{{ cfg.verification.success_message }}"></div>
+    <div class="copybox">Verification URL: <code>{{ request.url_root.rstrip('/') }}/verify/{{ guild.id }}</code></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Moderation behavior</h2><p>Control automatic behavior around moderation actions.</p></div></div>
+    <label class="checkline"><input type="checkbox" name="moderation_dm_on_action" {% if cfg.moderation.dm_on_action %}checked{% endif %}> DM members when a moderation action is applied when possible</label>
+  </section>
+
+  <div class="savebar"><span>Settings are stored per server.</span><button class="button primary" type="submit">Save server configuration</button></div>
+</form>
+
+<div class="two-col stack-gap">
+  <section class="panel">
+    <div class="panel-head"><div><h2>Recurring messages</h2><p>Automatic scheduled sends from the bot.</p></div></div>
+    <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_add">
+      <div class="field"><label>Channel</label><select name="am_channel" required><option value="">Choose channel</option>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Interval (minutes)</label><input name="am_interval" type="number" min="5" max="10080" value="60" required></div>
+      <div class="field"><label>Message</label><textarea name="am_content" required></textarea></div>
+      <button class="button" type="submit">Add automatic message</button>
+    </form>
+    <div class="mini-list">
+      {% for m in automessages %}
+      <form method="post" class="mini-item auto-editor">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_update"><input type="hidden" name="message_id" value="{{ m.id }}">
+        <div class="auto-head"><strong>#{{ m.id }}</strong><label class="checkline"><input type="checkbox" name="am_enabled" {% if m.enabled %}checked{% endif %}> Enabled</label></div>
+        <select name="am_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}" {% if m.channel_id|string == c.id|string %}selected{% endif %}># {{ c.name }}</option>{% endfor %}</select>
+        <input name="am_interval" type="number" min="5" max="10080" value="{{ m.interval_minutes }}" required>
+        <textarea name="am_content" required>{{ m.content }}</textarea>
+        <div class="auto-actions"><button class="button" type="submit">Save #{{ m.id }}</button><button class="icon-button" type="submit" name="section" value="automessage_delete">Remove</button></div>
+      </form>
+      {% else %}<div class="empty small">No recurring messages yet.</div>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Live actions</h2><p>Owner-only sends directly from the dashboard.</p></div></div>
+    <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <div class="field"><label>Panel channel</label><select name="panel_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
+      <div class="panel-actions"><button class="button" type="submit" name="section" value="post_ticket_panel">Post ticket panel</button><button class="button" type="submit" name="section" value="post_verification_panel">Post verification panel</button></div>
+    </form>
+    <hr>
+    <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="send_announcement">
+      <div class="field"><label>Announcement channel</label><select name="action_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Announcement</label><textarea name="action_content" required></textarea></div>
+      <button class="button" type="submit">Send announcement</button>
+    </form>
+    <hr>
+    <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="send_dm">
+      <div class="field"><label>User ID</label><input name="dm_user_id" inputmode="numeric" required></div>
+      <div class="field"><label>Direct message</label><textarea name="dm_content" required></textarea></div>
+      <button class="button" type="submit">Send bot DM</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Bot Control{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="bg"></div>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('dashboard') if session.get('owner_id') else url_for('index') }}">
+      <span class="brand-dot"></span>
+      <span>Bot Control</span>
+    </a>
+    {% if session.get('owner_id') %}
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Servers</a>
+      <a href="{{ url_for('global_settings') }}">Global</a>
+      <a href="{{ url_for('logout') }}" class="muted-link">Log out</a>
+    </nav>
+    {% endif %}
+  </header>
+  <main class="shell">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="toast {{ category }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

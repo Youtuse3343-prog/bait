@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Servers · Bot Control{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">OWNER DASHBOARD</div>
+    <h1>Your servers</h1>
+    <p>Select a server to control its complete feature set.</p>
+  </div>
+  <div class="owner-pill">Signed in as {{ session.get('owner_name') }}</div>
+</div>
+<div class="guild-grid">
+  {% for guild in guilds %}
+  <a class="guild-card" href="{{ url_for('guild_settings', guild_id=guild.id) }}">
+    {% if guild.icon %}<img class="guild-icon" src="{{ guild.icon.url }}" alt="">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
+    <div class="grow"><strong>{{ guild.name }}</strong><span>{{ guild.member_count }} members · {{ guild.id }}</span></div>
+    <span class="arrow">→</span>
+  </a>
+  {% else %}
+  <div class="empty">The bot is not currently connected to any servers.</div>
+  {% endfor %}
+</div>
+{% endblock %}

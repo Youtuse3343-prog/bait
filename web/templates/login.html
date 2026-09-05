@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Owner Login · Bot Control{% endblock %}
+{% block content %}
+<section class="hero center-card">
+  <div class="eyebrow">PRIVATE CONTROL PLANE</div>
+  <h1>Professional Discord bot management.</h1>
+  <p>Owner-only configuration, moderation controls, tickets, verification, logging, messages and automation in one secure dashboard.</p>
+  <a class="button primary large" href="{{ url_for('login') }}">Continue with Discord</a>
+  <div class="security-note">Access is granted only when the authenticated Discord account matches the configured <code>OWNER_ID</code>.</div>
+</section>
+{% endblock %}

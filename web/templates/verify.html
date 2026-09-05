@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Verify · {{ guild.name }}{% endblock %}
+{% block content %}
+<section class="center-card compact">
+  {% if guild.icon %}<img class="guild-icon large-icon" src="{{ guild.icon.url }}" alt="">{% endif %}
+  <div class="eyebrow">DISCORD OAUTH VERIFICATION</div>
+  <h1>{{ guild.name }}</h1>
+  <p>{{ cfg.verification.panel_description }}</p>
+  <form method="post" action="{{ url_for('verify_start', guild_id=guild.id) }}">
+    <button class="button primary large" type="submit">{{ cfg.verification.button_label }}</button>
+  </form>
+  <div class="security-note">Only your Discord identity is requested. The bot uses your Discord user ID to update configured server roles.</div>
+</section>
+{% endblock %}
