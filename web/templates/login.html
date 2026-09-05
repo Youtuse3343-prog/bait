@@ -1,11 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Owner Login · Bot Control{% endblock %}
+{% block title %}Owner Login · moealturej Bot Control{% endblock %}
 {% block content %}
-<section class="hero center-card">
-  <div class="eyebrow">PRIVATE CONTROL PLANE</div>
-  <h1>Professional Discord bot management.</h1>
-  <p>Owner-only configuration, moderation controls, tickets, verification, logging, messages and automation in one secure dashboard.</p>
-  <a class="button primary large" href="{{ url_for('login') }}">Continue with Discord</a>
-  <div class="security-note">Access is granted only when the authenticated Discord account matches the configured <code>OWNER_ID</code>.</div>
+<section class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo"><span class="logo-halo"></span><img src="https://www.moealturej.com/static/logo.png" alt="moealturej"></div>
+    <div class="eyebrow centered"><span></span> PRIVATE CONTROL PLANE <span></span></div>
+    <h1>Discord management,<br><em>without the clutter.</em></h1>
+    <p class="login-subtitle">One secure dashboard for tickets, verification, moderation, roles, logging, announcements, automated messages and bot configuration.</p>
+    <a class="button primary discord-login" href="{{ url_for('login') }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.3 17.3 0 0 0 15.2 4l-.53 1.08a15.8 15.8 0 0 0-5.35 0L8.78 4c-1.5.26-2.95.71-4.3 1.34C1.76 9.36 1.02 13.3 1.39 17.18A17.4 17.4 0 0 0 6.66 20l1.29-1.76a11 11 0 0 1-2.03-.97l.5-.4c3.92 1.82 8.17 1.82 12.04 0l.5.4c-.65.38-1.33.7-2.03.97L18.22 20a17.3 17.3 0 0 0 5.27-2.82c.44-4.5-.75-8.4-3.99-11.84ZM8.42 14.78c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.95 2.4-2.15 2.4Zm7.48 0c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.94 2.4-2.15 2.4Z"/></svg>
+      Continue with Discord
+      <span>→</span>
+    </a>
+    <div class="security-row">
+      <span class="shield-icon">◆</span>
+      <div><strong>Owner-locked access</strong><small>Only the Discord account matching your configured <code>OWNER_ID</code> can enter this dashboard.</small></div>
+    </div>
+  </div>
+
+  <div class="login-features">
+    <div><span>01</span><strong>Per-server control</strong><small>Independent feature switches and configuration for every guild.</small></div>
+    <div><span>02</span><strong>Secure OAuth</strong><small>Discord identity validation with protected owner-only dashboard access.</small></div>
+    <div><span>03</span><strong>Live operations</strong><small>Post panels, announcements and DMs without touching bot code.</small></div>
+  </div>
 </section>
 {% endblock %}

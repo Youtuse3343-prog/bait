@@ -1,23 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Servers · Bot Control{% endblock %}
+{% block title %}Servers · moealturej Bot Control{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <div class="eyebrow">OWNER DASHBOARD</div>
-    <h1>Your servers</h1>
-    <p>Select a server to control its complete feature set.</p>
+<section class="page-hero dashboard-hero">
+  <div class="hero-copy">
+    <div class="eyebrow"><span></span> OWNER DASHBOARD</div>
+    <h1>Control every server<br><em>from one place.</em></h1>
+    <p>Manage automation, moderation, verification, tickets, roles, messages and server-specific settings from your private control plane.</p>
   </div>
-  <div class="owner-pill">Signed in as {{ session.get('owner_name') }}</div>
+  <div class="hero-status-card">
+    <div class="pulse-ring"><span></span></div>
+    <div><small>CONTROL PLANE</small><strong>Online & protected</strong><p>Authenticated as {{ session.get('owner_name') }}</p></div>
+  </div>
+</section>
+
+<div class="stats-strip">
+  <div class="stat-box"><span class="stat-icon">◈</span><div><small>CONNECTED SERVERS</small><strong>{{ guilds|length }}</strong></div></div>
+  <div class="stat-box"><span class="stat-icon">✓</span><div><small>ACCESS</small><strong>Owner only</strong></div></div>
+  <div class="stat-box"><span class="stat-icon">⚡</span><div><small>CONFIGURATION</small><strong>Live per-server</strong></div></div>
 </div>
+
+<div class="section-heading">
+  <div><span class="section-kicker">YOUR SERVERS</span><h2>Choose a server</h2></div>
+  <span class="count-pill">{{ guilds|length }} connected</span>
+</div>
+
 <div class="guild-grid">
   {% for guild in guilds %}
   <a class="guild-card" href="{{ url_for('guild_settings', guild_id=guild.id) }}">
-    {% if guild.icon %}<img class="guild-icon" src="{{ guild.icon.url }}" alt="">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
-    <div class="grow"><strong>{{ guild.name }}</strong><span>{{ guild.member_count }} members · {{ guild.id }}</span></div>
-    <span class="arrow">→</span>
+    <div class="guild-card-glow"></div>
+    <div class="guild-card-top">
+      {% if guild.icon %}<img class="guild-icon" src="{{ guild.icon.url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
+      <span class="online-badge"><i></i> Connected</span>
+    </div>
+    <div class="guild-card-body">
+      <h3>{{ guild.name }}</h3>
+      <p>{{ guild.member_count }} members</p>
+      <span class="server-id">ID · {{ guild.id }}</span>
+    </div>
+    <div class="guild-card-footer"><span>Open server controls</span><span class="round-arrow">→</span></div>
   </a>
   {% else %}
-  <div class="empty">The bot is not currently connected to any servers.</div>
+  <div class="empty-state wide">
+    <div class="empty-icon">◇</div>
+    <h3>No connected servers</h3>
+    <p>The bot is not currently connected to any Discord servers.</p>
+  </div>
   {% endfor %}
 </div>
 {% endblock %}

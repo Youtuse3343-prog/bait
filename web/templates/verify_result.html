@@ -1,9 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Verification Result{% endblock %}
+{% block title %}Verification Result · moealturej{% endblock %}
 {% block content %}
-<section class="center-card compact">
-  <div class="result-icon {{ 'ok' if ok else 'bad' }}">{{ '✓' if ok else '!' }}</div>
-  <h1>{{ 'Verified' if ok else 'Verification failed' }}</h1>
+<section class="result-card">
+  <div class="result-mark {{ 'ok' if ok else 'bad' }}">{{ '✓' if ok else '!' }}</div>
+  <div class="eyebrow centered"><span></span> DISCORD VERIFICATION <span></span></div>
+  <h1>{{ 'You’re verified.' if ok else 'Verification failed.' }}</h1>
   <p>{{ message }}</p>
+  {% if ok %}<div class="result-tip">You can close this page and return to Discord.</div>{% endif %}
 </section>
 {% endblock %}
