@@ -31,6 +31,9 @@ class Settings:
     session_cookie_secure: bool = _bool("SESSION_COOKIE_SECURE", False)
     sync_commands_on_start: bool = _bool("SYNC_COMMANDS_ON_START", True)
     dev_guild_id: int = _int("DEV_GUILD_ID")
+    process_mode: str = os.getenv("PROCESS_MODE", "combined").strip().lower()  # combined | bot | web
+    internal_api_key: str = os.getenv("INTERNAL_API_KEY", "").strip()
+    web_action_poll_seconds: int = max(2, _int("ACTION_POLL_SECONDS", 5))
 
 
 settings = Settings()

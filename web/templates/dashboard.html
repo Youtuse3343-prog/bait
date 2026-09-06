@@ -1,50 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Servers · moealturej Bot Control{% endblock %}
 {% block content %}
-<section class="page-hero dashboard-hero dashboard-hero-v3">
-  <div class="hero-copy">
-    <div class="eyebrow"><span></span> MANAGEMENT WORKSPACE</div>
-    <h1>Everything your bot runs,<br><em>in one clean workspace.</em></h1>
-    <p>Configure server systems, roles, channels, automation, moderation and live messages without touching production code.</p>
-  </div>
-  <div class="hero-status-card hero-status-v3">
-    <div class="pulse-ring"><span></span></div>
-    <div><small>SYSTEM STATUS</small><strong>Connected & ready</strong><p>Signed in as {{ session.get('owner_name') }}</p></div>
-  </div>
+<section class="page-hero dashboard-hero">
+  <div><div class="eyebrow"><span></span> MANAGEMENT WORKSPACE</div><h1>Control every system.<br><em>See what matters first.</em></h1><p>Moderation, tickets, verification, automation, messages, server health and configuration in one place.</p></div>
+  <div class="hero-status-card"><span class="live-orb {{ 'online' if bot_online else 'offline' }}"></span><div><small>BOT STATUS</small><strong>{{ 'Connected & ready' if bot_online else 'Waiting for gateway' }}</strong><p>{{ guilds|length }} server{{ '' if guilds|length == 1 else 's' }} available</p></div></div>
 </section>
-
-<div class="stats-strip stats-strip-v3">
-  <div class="stat-box"><span class="stat-icon">◈</span><div><small>CONNECTED SERVERS</small><strong>{{ guilds|length }}</strong></div></div>
-  <div class="stat-box"><span class="stat-icon">◎</span><div><small>TOTAL MEMBERS</small><strong>{{ total_members }}</strong></div></div>
-  <div class="stat-box"><span class="stat-icon">⚡</span><div><small>CONFIGURATION</small><strong>Live per-server</strong></div></div>
+<div class="stats-strip">
+  <div class="stat-box"><span>▦</span><div><small>SERVERS</small><strong>{{ guilds|length }}</strong></div></div>
+  <div class="stat-box"><span>◎</span><div><small>TOTAL MEMBERS</small><strong>{{ '{:,}'.format(total_members) }}</strong></div></div>
+  <div class="stat-box"><span>⚡</span><div><small>CONTROL MODE</small><strong>Per-server</strong></div></div>
 </div>
-
-<div class="section-heading section-heading-v3">
-  <div><span class="section-kicker">CONNECTED GUILDS</span><h2>Choose a server</h2><p>Each server keeps its own feature switches and configuration.</p></div>
-  <span class="count-pill">{{ guilds|length }} connected</span>
-</div>
-
-<div class="guild-grid guild-grid-v3">
-  {% for guild in guilds %}
-  <a class="guild-card guild-card-v3" href="{{ url_for('guild_settings', guild_id=guild.id) }}">
-    <div class="guild-card-glow"></div>
-    <div class="guild-card-top">
-      {% if guild.icon %}<img class="guild-icon" src="{{ guild.icon.url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
-      <span class="online-badge"><i></i> Connected</span>
-    </div>
-    <div class="guild-card-body">
-      <h3>{{ guild.name }}</h3>
-      <p>{{ guild.member_count }} members</p>
-      <span class="server-id">{{ guild.id }}</span>
-    </div>
-    <div class="guild-card-footer"><span>Open server controls</span><span class="round-arrow">→</span></div>
-  </a>
-  {% else %}
-  <div class="empty-state wide">
-    <div class="empty-icon">◇</div>
-    <h3>No connected servers</h3>
-    <p>The bot is not currently connected to any Discord servers.</p>
-  </div>
-  {% endfor %}
+<div class="section-heading"><div><span class="section-kicker">CONNECTED GUILDS</span><h2>Choose a server</h2><p>Open a server workspace to manage its independent configuration and live systems.</p></div><span class="count-pill">{{ guilds|length }} available</span></div>
+<div class="guild-grid">
+{% for guild in guilds %}
+<a class="guild-card" href="{{ url_for('guild_settings', guild_id=guild.id) }}">
+  <div class="guild-card-top">{% if guild.icon_url %}<img class="guild-icon" src="{{ guild.icon_url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}<span class="online-badge {{ 'online' if guild.live else 'snapshot' }}"><i></i>{{ 'Live' if guild.live else 'Snapshot' }}</span></div>
+  <div class="guild-card-body"><h3>{{ guild.name }}</h3><p>{{ '{:,}'.format(guild.member_count|int) }} members</p><span class="server-id">{{ guild.id }}</span></div>
+  <div class="guild-card-footer"><span>Open workspace</span><span class="round-arrow">→</span></div>
+</a>
+{% else %}<div class="empty-state wide"><div class="empty-icon">◇</div><h3>No servers available</h3><p>The bot has not published a live connection or server snapshot yet.</p></div>{% endfor %}
 </div>
 {% endblock %}

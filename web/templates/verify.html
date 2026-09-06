@@ -1,24 +1,5 @@
 {% extends "base.html" %}
 {% block title %}Verify · {{ guild.name }}{% endblock %}
 {% block content %}
-<section class="verify-shell">
-  <div class="verify-card">
-    <div class="verify-brand"><img src="{{ url_for('brand_logo') }}" alt="moealturej"><span>Secure Verification</span></div>
-    <div class="guild-identity">
-      {% if guild.icon %}<img class="guild-icon verify-guild-icon" src="{{ guild.icon.url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon verify-guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
-      <div><small>YOU ARE VERIFYING FOR</small><h1>{{ guild.name }}</h1></div>
-    </div>
-    <p class="verify-description">{{ cfg.verification.panel_description }}</p>
-    <form method="post" action="{{ url_for('verify_start', guild_id=guild.id) }}">
-      <button class="button primary verify-button" type="submit">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.3 17.3 0 0 0 15.2 4l-.53 1.08a15.8 15.8 0 0 0-5.35 0L8.78 4c-1.5.26-2.95.71-4.3 1.34C1.76 9.36 1.02 13.3 1.39 17.18A17.4 17.4 0 0 0 6.66 20l1.29-1.76a11 11 0 0 1-2.03-.97l.5-.4c3.92 1.82 8.17 1.82 12.04 0l.5.4c-.65.38-1.33.7-2.03.97L18.22 20a17.3 17.3 0 0 0 5.27-2.82c.44-4.5-.75-8.4-3.99-11.84ZM8.42 14.78c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.95 2.4-2.15 2.4Zm7.48 0c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.94 2.4-2.15 2.4Z"/></svg>
-        {{ cfg.verification.button_label }}
-      </button>
-    </form>
-    <div class="security-row compact-security">
-      <span class="shield-icon">◆</span>
-      <div><strong>Identity-only OAuth</strong><small>The bot only uses your Discord user ID to apply the configured server roles.</small></div>
-    </div>
-  </div>
-</section>
+<section class="verify-shell"><div class="verify-card"><div class="verify-brand"><img src="{{ url_for('brand_logo') }}" alt="moealturej"><span>Discord Verification</span></div><div class="guild-identity">{% if guild.icon_url %}<img class="guild-icon verify-guild-icon" src="{{ guild.icon_url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon verify-guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}<div><small>VERIFYING FOR</small><h1>{{ guild.name }}</h1></div></div><p>{{ cfg.verification.panel_description }}</p><form method="post" action="{{ url_for('verify_start', guild_id=guild.id) }}"><button class="button primary verify-button" type="submit">{{ cfg.verification.button_label }} <span>→</span></button></form><div class="login-meta"><span>◆</span><div><strong>Discord OAuth</strong><small>Your Discord identity is used to apply the configured verification roles.</small></div></div></div></section>
 {% endblock %}

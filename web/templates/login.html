@@ -1,27 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · moealturej Bot Control{% endblock %}
 {% block content %}
-<section class="login-wrap login-wrap-v3">
-  <div class="login-card login-card-v3">
-    <div class="login-logo"><span class="logo-halo"></span><img src="{{ url_for('brand_logo') }}" alt="moealturej"></div>
-    <div class="eyebrow centered"><span></span> MANAGEMENT CONSOLE <span></span></div>
-    <h1>Discord management,<br><em>designed to stay simple.</em></h1>
-    <p class="login-subtitle">Manage server tools, moderation, verification, tickets, roles, automated messages and live operations from one focused workspace.</p>
-    <a class="button primary discord-login" href="{{ url_for('login') }}">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.3 17.3 0 0 0 15.2 4l-.53 1.08a15.8 15.8 0 0 0-5.35 0L8.78 4c-1.5.26-2.95.71-4.3 1.34C1.76 9.36 1.02 13.3 1.39 17.18A17.4 17.4 0 0 0 6.66 20l1.29-1.76a11 11 0 0 1-2.03-.97l.5-.4c3.92 1.82 8.17 1.82 12.04 0l.5.4c-.65.38-1.33.7-2.03.97L18.22 20a17.3 17.3 0 0 0 5.27-2.82c.44-4.5-.75-8.4-3.99-11.84ZM8.42 14.78c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.95 2.4-2.15 2.4Zm7.48 0c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.4 2.15-2.4 1.21 0 2.17 1.08 2.15 2.4 0 1.32-.94 2.4-2.15 2.4Z"/></svg>
-      Continue with Discord
-      <span>→</span>
-    </a>
-    <div class="security-row">
-      <span class="shield-icon">◆</span>
-      <div><strong>Discord-secured access</strong><small>Use your Discord account to continue to the management console.</small></div>
-    </div>
+<section class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo"><span></span><img src="{{ url_for('brand_logo') }}" alt="moealturej"></div>
+    <div class="eyebrow centered"><span></span> BOT MANAGEMENT <span></span></div>
+    <h1>Everything organized.<br><em>Nothing in the way.</em></h1>
+    <p>Manage Discord systems, moderation, tickets, automation and live messages from one focused workspace.</p>
+    <a class="button primary discord-login" href="{{ url_for('login') }}"><span class="discord-mark">◈</span>Continue with Discord<span>→</span></a>
+    <div class="login-meta"><span>◆</span><div><strong>Continue to the dashboard</strong><small>Discord handles the account sign-in flow.</small></div></div>
   </div>
-
-  <div class="login-features">
-    <div><span>01</span><strong>Per-server control</strong><small>Independent feature switches, roles, channels and behavior for every guild.</small></div>
-    <div><span>02</span><strong>Live server tools</strong><small>Server stats, tickets, verification, moderation, logging and automated messages.</small></div>
-    <div><span>03</span><strong>Message studio</strong><small>Build polished Discord embeds with previews and optional message content.</small></div>
-  </div>
+  <div class="login-features"><div><span>01</span><strong>Server control</strong><small>Independent settings and health for every server.</small></div><div><span>02</span><strong>Automation</strong><small>Tickets, AutoMod, stats, messages and verification.</small></div><div><span>03</span><strong>Live operations</strong><small>Cases, actions, schedules and audit history.</small></div></div>
 </section>
 {% endblock %}

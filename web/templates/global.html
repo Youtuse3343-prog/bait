@@ -1,86 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Global Settings · moealturej Bot Control{% endblock %}
+{% block title %}Global · moealturej Bot Control{% endblock %}
 {% block content %}
-<section class="page-hero compact-hero">
-  <div class="hero-copy">
-    <div class="eyebrow"><span></span> GLOBAL BOT SETTINGS</div>
-    <h1>Global controls.</h1>
-    <p>Manage bot-wide presence and dashboard uptime behavior. These settings apply across every connected server.</p>
-  </div>
-  <div class="context-chip"><span class="context-icon">◎</span><div><small>SCOPE</small><strong>Entire bot</strong></div></div>
-</section>
-
-<div class="subnav">
-  <a href="#presence">Presence</a>
-  <a href="#keep-alive">Keep-alive</a>
-</div>
-
-<form method="post" class="stack settings-stack">
-  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <input type="hidden" name="section" value="settings">
-
-  <section class="panel feature-panel" id="presence">
-    <div class="panel-head">
-      <div class="panel-title-wrap"><span class="panel-icon">◌</span><div><span class="section-kicker">BOT PRESENCE</span><h2>Presence rotation</h2><p>Cycle through up to eight custom Discord status entries automatically.</p></div></div>
-      <span class="badge badge-purple">Live</span>
-    </div>
-    <div class="field narrow premium-field">
-      <label>Rotation interval <span>seconds</span></label>
-      <input name="status_interval" type="number" min="15" max="3600" value="{{ cfg.status_interval_seconds }}">
-      <small>How long each status remains active before the next one is shown.</small>
-    </div>
-    <div class="status-list">
-      {% for i in range(1,9) %}
-      {% set item = cfg.statuses[i-1] if cfg.statuses|length >= i else {} %}
-      <div class="status-row">
-        <span class="status-number">{{ '%02d'|format(i) }}</span>
-        <select name="status_type_{{ i }}">
-          {% for kind in ['playing','watching','listening','competing','streaming'] %}<option value="{{ kind }}" {% if item.get('type') == kind %}selected{% endif %}>{{ kind|title }}</option>{% endfor %}
-        </select>
-        <input name="status_text_{{ i }}" maxlength="128" placeholder="Enter status text..." value="{{ item.get('text','') }}">
-      </div>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="panel feature-panel" id="keep-alive">
-    <div class="panel-head">
-      <div class="panel-title-wrap"><span class="panel-icon">↻</span><div><span class="section-kicker">UPTIME</span><h2>Dashboard keep-alive</h2><p>Periodically call the dashboard health endpoint while the process is running.</p></div></div>
-      <span class="badge {{ 'badge-success' if cfg.keep_alive.enabled else '' }}">{{ 'Enabled' if cfg.keep_alive.enabled else 'Disabled' }}</span>
-    </div>
-
-    <label class="check-row premium-check">
-      <input type="checkbox" name="keep_alive_enabled" {% if cfg.keep_alive.enabled %}checked{% endif %}>
-      <span class="check-control"><i></i></span>
-      <span class="check-copy"><strong>Enable self-ping</strong><small>Uses only your configured <code>DASHBOARD_BASE_URL</code> plus <code>/health</code>.</small></span>
-    </label>
-
-    <div class="field narrow premium-field top-gap">
-      <label>Ping interval <span>seconds</span></label>
-      <input name="keep_alive_interval" type="number" min="60" max="3600" value="{{ cfg.keep_alive.interval_seconds }}">
-      <small>Minimum 60 seconds. 300 seconds / 5 minutes is recommended.</small>
-    </div>
-
-    {% if keep_alive_state %}
-    <div class="info-grid health-grid">
-      <div class="info-card"><span class="info-icon">⌁</span><div><span class="section-kicker">TARGET</span><strong>{{ keep_alive_state.target_url }}</strong></div></div>
-      <div class="info-card"><span class="info-icon">●</span><div><span class="section-kicker">WORKER</span><strong>{{ 'Running' if keep_alive_state.running else 'Stopped' }}</strong></div></div>
-      <div class="info-card"><span class="info-icon">◷</span><div><span class="section-kicker">LAST ATTEMPT</span><strong>{{ keep_alive_state.last_attempt or 'Not yet' }}</strong></div></div>
-      <div class="info-card"><span class="info-icon">↗</span><div><span class="section-kicker">LAST RESULT</span><strong>{% if keep_alive_state.last_status %}HTTP {{ keep_alive_state.last_status }}{% elif keep_alive_state.last_error %}{{ keep_alive_state.last_error }}{% else %}Not yet{% endif %}</strong></div></div>
-    </div>
-    {% endif %}
-  </section>
-
-  <div class="savebar">
-    <div><span class="save-dot"></span><span>Changes are picked up by the live process.</span></div>
-    <button class="button primary" type="submit">Save global settings <span>→</span></button>
-  </div>
+<section class="page-hero compact-hero"><div><div class="eyebrow"><span></span> GLOBAL SETTINGS</div><h1>Bot-wide controls.</h1><p>Presence rotation, dashboard uptime behavior and configuration backup policy.</p></div><div class="context-chip"><span>●</span><div><small>PROCESS</small><strong>{{ process_mode|title }} · {{ 'Online' if bot_online else 'Web ready' }}</strong></div></div></section>
+<form method="post" class="stack settings-stack" data-dirty-form>
+<input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="settings">
+<section class="panel" id="presence"><div class="panel-head"><div><span class="section-kicker">PRESENCE</span><h2>Status rotation</h2><p>Cycle through up to eight Discord presence entries.</p></div><span class="badge">GLOBAL</span></div><div class="field narrow"><label>Rotation interval <span>seconds</span></label><input name="status_interval" type="number" min="15" max="3600" value="{{ cfg.status_interval_seconds }}"></div><div class="status-list">{% for i in range(1,9) %}{% set item=cfg.statuses[i-1] if cfg.statuses|length>=i else {} %}<div class="status-row"><span>{{ '%02d'|format(i) }}</span><select name="status_type_{{ i }}">{% for kind in ['playing','watching','listening','competing','streaming'] %}<option value="{{ kind }}" {% if item.get('type')==kind %}selected{% endif %}>{{ kind|title }}</option>{% endfor %}</select><input name="status_text_{{ i }}" maxlength="128" placeholder="Status text" value="{{ item.get('text','') }}"></div>{% endfor %}</div></section>
+<section class="panel" id="keep-alive"><div class="panel-head"><div><span class="section-kicker">UPTIME</span><h2>Dashboard keep-alive</h2><p>Call this dashboard's own health route at a configurable interval.</p></div><span class="badge {{ 'success' if cfg.keep_alive.enabled else '' }}">{{ 'ENABLED' if cfg.keep_alive.enabled else 'OFF' }}</span></div><label class="switch-row"><input type="checkbox" name="keep_alive_enabled" {% if cfg.keep_alive.enabled %}checked{% endif %}><span class="toggle"></span><span><strong>Enable self-ping</strong><small>Target is locked to your configured dashboard URL.</small></span></label><div class="field narrow"><label>Interval <span>seconds</span></label><input name="keep_alive_interval" type="number" min="60" max="3600" value="{{ cfg.keep_alive.interval_seconds }}"></div>{% if keep_alive_state %}<div class="info-grid"><div class="info-card"><small>TARGET</small><strong>{{ keep_alive_state.target_url }}</strong></div><div class="info-card"><small>WORKER</small><strong>{{ 'Running' if keep_alive_state.running else 'Stopped' }}</strong></div><div class="info-card"><small>LAST ATTEMPT</small><strong>{{ keep_alive_state.last_attempt or 'Not yet' }}</strong></div><div class="info-card"><small>RESULT</small><strong>{% if keep_alive_state.last_status %}HTTP {{ keep_alive_state.last_status }}{% elif keep_alive_state.last_error %}{{ keep_alive_state.last_error }}{% else %}Not yet{% endif %}</strong></div></div>{% endif %}</section>
+<section class="panel" id="backups"><div class="panel-head"><div><span class="section-kicker">RECOVERY</span><h2>Automatic configuration backups</h2><p>Keep periodic server configuration snapshots so mistakes can be recovered quickly.</p></div></div><label class="switch-row"><input type="checkbox" name="backup_enabled" {% if cfg.backup.enabled %}checked{% endif %}><span class="toggle"></span><span><strong>Automatic backups</strong><small>Creates configuration snapshots for connected servers.</small></span></label><div class="form-grid"><div class="field"><label>Backup every <span>hours</span></label><input name="backup_interval_hours" type="number" min="1" max="168" value="{{ cfg.backup.interval_hours }}"></div><div class="field"><label>Retention target</label><input name="backup_keep" type="number" min="1" max="100" value="{{ cfg.backup.keep }}"></div></div></section>
+<div class="savebar"><div><span class="save-dot"></span><strong data-dirty-label>All changes saved</strong></div><button class="button primary" type="submit">Save global settings <span>→</span></button></div>
 </form>
-
-<form method="post" class="utility-action">
-  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <input type="hidden" name="section" value="ping_now">
-  <div><span class="utility-icon">↗</span><div><strong>Test keep-alive endpoint</strong><small>Send one request to the configured health URL right now.</small></div></div>
-  <button class="button" type="submit">Ping now</button>
-</form>
+<form method="post" class="utility-action"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="ping_now"><div><span class="utility-icon">↗</span><div><strong>Test keep-alive now</strong><small>Send one request to the configured health endpoint.</small></div></div><button class="button" type="submit">Ping now</button></form>
+<form method="post" class="utility-action" data-confirm="Replace Discord's global slash-command registration with the commands in this build? This is the cleanup/sync operation for stale global commands."><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="sync_commands_global"><div><span class="utility-icon">⌁</span><div><strong>Replace global slash commands</strong><small>Sync the current command tree and remove stale global registrations.</small></div></div><button class="button" type="submit">Sync global commands</button></form>
 {% endblock %}

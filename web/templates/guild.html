@@ -1,292 +1,214 @@
 {% extends "base.html" %}
 {% block title %}{{ guild.name }} · moealturej Bot Control{% endblock %}
-{% macro channel_select(name, selected) %}
-<select name="channel_{{ name }}"><option value="">Not set</option>{% for c in channels %}{% if (name == 'ticket_category' and c.type.name == 'category') or (name != 'ticket_category' and c.type.name in ['text','news']) %}<option value="{{ c.id }}" {% if selected and selected|string == c.id|string %}selected{% endif %}>{% if c.type.name == 'category' %}Category · {% else %}# {% endif %}{{ c.name }}</option>{% endif %}{% endfor %}</select>
-{% endmacro %}
-{% macro role_select(name, selected) %}
-<select name="role_{{ name }}"><option value="">Not set</option>{% for r in roles %}<option value="{{ r.id }}" {% if selected and selected|string == r.id|string %}selected{% endif %}>@{{ r.name }}</option>{% endfor %}</select>
-{% endmacro %}
-{% macro stat_role_select(index, selected) %}
-<select name="stat_role_{{ index }}" class="stat-role-select"><option value="" data-count="0">Choose role</option>{% for r in roles %}<option value="{{ r.id }}" data-count="{{ r.members|length }}" {% if selected and selected|string == r.id|string %}selected{% endif %}>@{{ r.name }}</option>{% endfor %}</select>
-{% endmacro %}
 {% block content %}
-<section class="server-hero server-hero-v3">
-  <div class="server-identity">
-    <div class="guild-icon-wrap">{% if guild.icon %}<img class="guild-icon hero-guild-icon" src="{{ guild.icon.url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon hero-guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}<span class="connected-dot"></span></div>
-    <div><div class="eyebrow"><span></span> SERVER WORKSPACE</div><h1>{{ guild.name }}</h1><p>{{ guild.member_count }} members <b>·</b> Server ID {{ guild.id }}</p></div>
-  </div>
-  <a class="button ghost" href="{{ url_for('dashboard') }}">← All servers</a>
-</section>
-
-<nav class="subnav server-subnav server-subnav-v3" aria-label="Server setting sections">
-  <a href="#features">Features</a>
-  <a href="#channels">Channels</a>
-  <a href="#roles">Roles</a>
-  <a href="#welcome">Welcome</a>
-  <a href="#tickets">Tickets</a>
-  <a href="#verification">Verification</a>
-  <a href="#moderation">Moderation</a>
-  <a href="#server-stats">Server stats</a>
-  <a href="#automation">Automation</a>
-  <a href="#message-studio">Message studio</a>
-</nav>
-
-<form method="post" class="stack settings-stack">
-  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-
-  <section class="panel panel-v3" id="features">
-    <div class="panel-head">
-      <div class="panel-title-wrap"><span class="panel-icon">◇</span><div><span class="section-kicker">SYSTEMS</span><h2>Feature switches</h2><p>Turn each system on or off independently for this server.</p></div></div>
-      <span class="badge badge-purple">Per-server</span>
+<div class="workspace" data-guild-id="{{ guild.id }}">
+  <aside class="workspace-sidebar">
+    <div class="server-mini">
+      {% if guild.icon_url %}<img src="{{ guild.icon_url }}" alt="{{ guild.name }}">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}
+      <div><small>SERVER WORKSPACE</small><strong>{{ guild.name }}</strong><span>{{ '{:,}'.format(guild.member_count|int) }} members</span></div>
     </div>
-    <div class="toggle-grid">
-      {% for key, enabled in cfg.features.items() %}
-      <label class="toggle-card">
-        <span class="feature-mark">{{ key[:1]|upper }}</span>
-        <span class="toggle-copy"><strong>{{ key.replace('_',' ')|title }}</strong><small>{{ 'Enabled' if enabled else 'Disabled' }}</small></span>
-        <input type="checkbox" name="feature_{{ key }}" {% if enabled %}checked{% endif %}><i></i>
-      </label>
-      {% endfor %}
-    </div>
-  </section>
+    <div class="command-search"><span>⌕</span><input id="workspace-search" placeholder="Search settings…" autocomplete="off"><kbd>Ctrl K</kbd></div>
+    <nav class="workspace-nav" id="workspace-nav">
+      <div class="nav-group"><small>OVERVIEW</small><a href="#overview" data-search="overview health activity"><span>⌂</span>Overview</a></div>
+      <div class="nav-group"><small>MANAGEMENT</small><a href="#features" data-search="features switches enable disable"><span>◇</span>Features</a><a href="#routing" data-search="channels roles routing permissions"><span>#</span>Channels & Roles</a><a href="#moderation" data-search="moderation cases warnings timeouts bans"><span>⚒</span>Moderation</a><a href="#automod" data-search="automod anti raid spam links filters"><span>⚡</span>AutoMod</a><a href="#tickets" data-search="tickets support forms transcript analytics"><span>◫</span>Tickets</a></div>
+      <div class="nav-group"><small>AUTOMATION</small><a href="#welcome-verification" data-search="welcome verification oauth autorole"><span>✓</span>Welcome & Verify</a><a href="#server-stats" data-search="server stats members bots boosts voice"><span>▥</span>Server Stats</a><a href="#auto-messages" data-search="automatic recurring messages"><span>↻</span>Auto Messages</a></div>
+      <div class="nav-group"><small>MESSAGING</small><a href="#message-studio" data-search="message studio embed builder buttons schedule templates"><span>✦</span>Message Studio</a><a href="#live-actions" data-search="dm direct message live actions"><span>↗</span>Live Actions</a></div>
+      <div class="nav-group"><small>CONFIGURATION</small><a href="#appearance" data-search="appearance colors footer branding"><span>◐</span>Appearance</a><a href="#health" data-search="health permissions configuration problems"><span>♥</span>Health & Permissions</a><a href="#audit" data-search="audit backups recovery history"><span>◷</span>Audit & Recovery</a></div>
+    </nav>
+    <a class="sidebar-back" href="{{ url_for('dashboard') }}">← All servers</a>
+  </aside>
 
-  <section class="panel panel-v3" id="channels">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">#</span><div><span class="section-kicker">ROUTING</span><h2>Channels</h2><p>Choose where each bot system publishes messages and logs.</p></div></div></div>
-    <div class="form-grid">
-      {% for key, selected in cfg.channels.items() %}<div class="field premium-field"><label>{{ key.replace('_',' ')|title }}</label>{{ channel_select(key, selected) }}</div>{% endfor %}
-    </div>
-  </section>
-
-  <section class="panel panel-v3" id="roles">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">@</span><div><span class="section-kicker">PERMISSIONS</span><h2>Roles</h2><p>Configure join roles, verification transitions and ticket staff access.</p></div></div></div>
-    <div class="form-grid">
-      {% for key, selected in cfg.roles.items() %}<div class="field premium-field"><label>{{ key.replace('_',' ')|title }}</label>{{ role_select(key, selected) }}</div>{% endfor %}
-    </div>
-    <div class="hint"><span class="hint-icon">i</span><span>For verification, the bot removes <b>Verification Remove</b> and adds <b>Verification Add</b>. Keep the bot role above both configured roles.</span></div>
-  </section>
-
-  <section class="panel panel-v3" id="welcome">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">✦</span><div><span class="section-kicker">ONBOARDING</span><h2>Welcome system</h2><p>Control the public greeting and optional private welcome message.</p></div></div></div>
-    <div class="variable-row"><span>AVAILABLE VARIABLES</span><code>{mention}</code><code>{user}</code><code>{server}</code><code>{member_count}</code></div>
-    <div class="field premium-field"><label>Public welcome message</label><textarea name="welcome_content" placeholder="Welcome message...">{{ cfg.welcome.content }}</textarea></div>
-    <label class="check-row premium-check inline-check">
-      <input type="checkbox" name="welcome_dm_enabled" {% if cfg.welcome.dm_enabled %}checked{% endif %}><span class="check-control"><i></i></span><span class="check-copy"><strong>Send a private welcome DM</strong><small>Also greet each new member directly through the bot.</small></span>
-    </label>
-    <div class="field premium-field"><label>Welcome DM</label><textarea name="welcome_dm_content" placeholder="Private welcome message...">{{ cfg.welcome.dm_content }}</textarea></div>
-  </section>
-
-  <section class="panel panel-v3" id="tickets">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">▱</span><div><span class="section-kicker">SUPPORT</span><h2>Ticket system</h2><p>Customize the public panel and the first message inside a new ticket.</p></div></div></div>
-    <div class="form-grid">
-      <div class="field premium-field"><label>Panel title</label><input name="ticket_panel_title" value="{{ cfg.tickets.panel_title }}"></div>
-      <div class="field premium-field"><label>Button label</label><input name="ticket_button_label" value="{{ cfg.tickets.button_label }}"></div>
-    </div>
-    <div class="field premium-field"><label>Panel description</label><textarea name="ticket_panel_description">{{ cfg.tickets.panel_description }}</textarea></div>
-    <div class="field premium-field"><label>Opening message</label><textarea name="ticket_opening_message">{{ cfg.tickets.opening_message }}</textarea></div>
-  </section>
-
-  <section class="panel panel-v3" id="verification">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">✓</span><div><span class="section-kicker">OAUTH</span><h2>Discord verification</h2><p>Verify a Discord identity, then automatically swap the configured server roles.</p></div></div><span class="badge badge-success">OAuth2</span></div>
-    <div class="form-grid">
-      <div class="field premium-field"><label>Panel title</label><input name="verification_panel_title" value="{{ cfg.verification.panel_title }}"></div>
-      <div class="field premium-field"><label>Button label</label><input name="verification_button_label" value="{{ cfg.verification.button_label }}"></div>
-    </div>
-    <div class="field premium-field"><label>Panel description</label><textarea name="verification_panel_description">{{ cfg.verification.panel_description }}</textarea></div>
-    <div class="field premium-field"><label>Success message</label><input name="verification_success_message" value="{{ cfg.verification.success_message }}"></div>
-    <div class="copybox"><span><small>VERIFICATION URL</small><code>{{ request.url_root.rstrip('/') }}/verify/{{ guild.id }}</code></span></div>
-  </section>
-
-  <section class="panel panel-v3" id="moderation">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">⚑</span><div><span class="section-kicker">SAFETY</span><h2>Moderation behavior</h2><p>Control member notifications when moderators take action.</p></div></div></div>
-    <label class="check-row premium-check inline-check">
-      <input type="checkbox" name="moderation_dm_on_action" {% if cfg.moderation.dm_on_action %}checked{% endif %}><span class="check-control"><i></i></span><span class="check-copy"><strong>DM members on moderation actions</strong><small>When possible, notify a member privately after moderation is applied.</small></span>
-    </label>
-  </section>
-
-  {% set stats = cfg.server_stats %}
-  {% set stat_items = stats['items'] %}
-  <section class="panel panel-v3 stats-panel" id="server-stats" data-members-count="{{ guild.member_count or 0 }}" data-humans-count="{{ guild.members|rejectattr('bot')|list|length }}" data-bots-count="{{ guild.members|selectattr('bot')|list|length }}" data-boosts-count="{{ guild.premium_subscription_count or 0 }}">
-    <div class="panel-head">
-      <div class="panel-title-wrap"><span class="panel-icon">▥</span><div><span class="section-kicker">LIVE COUNTERS</span><h2>Server stats channels</h2><p>Create locked voice channels like Members, Humans, Bots, Boosts or a custom role count.</p></div></div>
-      <span class="badge {{ 'badge-success' if cfg.features.server_stats else '' }}">{{ 'Active' if cfg.features.server_stats else 'Off' }}</span>
-    </div>
-
-    <div class="stats-config-top">
-      <div class="field premium-field"><label>Category name</label><input name="stats_category_name" maxlength="100" value="{{ stats.category_name }}"><small>The category is created automatically the first time you sync.</small></div>
-      <div class="field premium-field"><label>Refresh interval <span>seconds</span></label><input name="stats_interval" type="number" min="60" max="3600" value="{{ stats.update_interval_seconds }}"><small>Discord channel names are refreshed at this interval.</small></div>
-      <div class="managed-state-card"><span>MANAGED CATEGORY</span><strong>{% if stats.category_id %}{{ stats.category_id }}{% else %}Not created yet{% endif %}</strong><small>Requires the bot's Manage Channels permission.</small></div>
-    </div>
-
-    <div class="variable-row stats-variables"><span>CHANNEL TEMPLATE</span><code>{emoji}</code><code>{label}</code><code>{value}</code></div>
-    <div class="stat-builder-list">
-      {% for i in range(8) %}
-      {% set item = stat_items[i] if stat_items|length > i else {} %}
-      <article class="stat-builder-row" data-stat-row>
-        <div class="stat-row-head">
-          <label class="small-checkbox"><input type="checkbox" name="stat_enabled_{{ i }}" {% if item.get('enabled') %}checked{% endif %}> Enabled</label>
-          <span class="message-number">STAT {{ '%02d'|format(i + 1) }}</span>
-          <div class="stat-channel-preview"><span>Preview</span><strong data-stat-preview>{% if stat_previews|length > i %}{{ stat_previews[i].name }}{% else %}Configure this stat{% endif %}</strong></div>
-        </div>
-        <div class="stat-builder-grid">
-          <div class="field premium-field compact-field"><label>Emoji</label><input name="stat_emoji_{{ i }}" maxlength="24" value="{{ item.get('emoji','') }}" placeholder="👥"></div>
-          <div class="field premium-field compact-field"><label>Label</label><input name="stat_label_{{ i }}" maxlength="50" value="{{ item.get('label','') }}" placeholder="Members"></div>
-          <div class="field premium-field compact-field"><label>Counter</label><select name="stat_type_{{ i }}" data-stat-type>{% for kind, title in [('members','Members'),('humans','Humans'),('bots','Bots'),('boosts','Boosts'),('role','Role members')] %}<option value="{{ kind }}" {% if item.get('type','members') == kind %}selected{% endif %}>{{ title }}</option>{% endfor %}</select></div>
-          <div class="field premium-field compact-field stat-role-field {% if item.get('type') != 'role' %}is-muted{% endif %}"><label>Role for count</label>{{ stat_role_select(i, item.get('role_id')) }}</div>
-          <div class="field premium-field compact-field stat-template-field"><label>Name template</label><input name="stat_template_{{ i }}" maxlength="100" value="{{ item.get('template','{emoji} {label}: {value}') }}"></div>
-          <div class="managed-channel-chip"><span>CHANNEL</span><strong>{{ item.get('channel_id') or 'Auto-create' }}</strong></div>
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <div class="savebar savebar-v3">
-    <div><span class="save-dot"></span><span>Changes are stored independently for {{ guild.name }}.</span></div>
-    <div class="save-actions">
-      <button class="button" type="submit" name="section" value="server_stats_sync">Save & sync stats</button>
-      <button class="button primary" type="submit" name="section" value="settings">Save configuration <span>→</span></button>
-    </div>
-  </div>
-</form>
-
-<form method="post" class="utility-action stats-remove-action" data-confirm="Remove the server-stat channels managed by this bot?">
-  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <input type="hidden" name="section" value="server_stats_remove">
-  <div><span class="utility-icon">▥</span><div><strong>Remove managed server-stat channels</strong><small>Deletes only the stat voice channels currently tracked by this bot configuration.</small></div></div>
-  <button class="danger-button" type="submit">Remove stat channels</button>
-</form>
-
-<div class="operations-grid-v3 stack-gap">
-  <section class="panel panel-v3" id="automation">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">↻</span><div><span class="section-kicker">SCHEDULED</span><h2>Recurring messages</h2><p>Automatically send a message on a repeating interval.</p></div></div></div>
-    <div class="automation-layout">
-      <form method="post" class="stack compact-stack action-box automation-create">
-        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_add">
-        <div class="field premium-field"><label>Channel</label><select name="am_channel" required><option value="">Choose channel</option>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
-        <div class="field premium-field"><label>Interval <span>minutes</span></label><input name="am_interval" type="number" min="5" max="10080" value="60" required></div>
-        <div class="field premium-field"><label>Message</label><textarea name="am_content" required placeholder="Message to send automatically..."></textarea></div>
-        <button class="button primary subtle-primary" type="submit">Add automatic message</button>
-      </form>
-      <div class="mini-list automation-list">
-        {% for m in automessages %}
-        <form method="post" class="mini-item auto-editor">
-          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_update"><input type="hidden" name="message_id" value="{{ m.id }}">
-          <div class="auto-head"><div><span class="message-number">#{{ m.id }}</span><strong>Recurring message</strong></div><label class="small-checkbox"><input type="checkbox" name="am_enabled" {% if m.enabled %}checked{% endif %}> Enabled</label></div>
-          <select name="am_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}" {% if m.channel_id|string == c.id|string %}selected{% endif %}># {{ c.name }}</option>{% endfor %}</select>
-          <input name="am_interval" type="number" min="5" max="10080" value="{{ m.interval_minutes }}" required>
-          <textarea name="am_content" required>{{ m.content }}</textarea>
-          <div class="auto-actions"><button class="button" type="submit">Save #{{ m.id }}</button><button class="danger-button" type="submit" name="section" value="automessage_delete">Remove</button></div>
-        </form>
-        {% else %}<div class="empty-state small"><div class="empty-icon">↻</div><strong>No recurring messages yet</strong><p>Create one when you need scheduled server updates.</p></div>{% endfor %}
+  <div class="workspace-main">
+    <section class="server-hero" id="overview">
+      <div class="server-title-row">
+        <div class="server-identity">{% if guild.icon_url %}<img src="{{ guild.icon_url }}" alt="">{% else %}<div class="guild-icon fallback">{{ guild.name[:1] }}</div>{% endif %}<div><div class="eyebrow"><span></span> SERVER CONTROL</div><h1>{{ guild.name }}</h1><p>{{ '{:,}'.format(guild.member_count|int) }} members · Server ID {{ guild.id }}</p></div></div>
+        <div class="hero-actions"><span class="live-chip {{ 'online' if guild.live else 'snapshot' }}"><i></i>{{ 'Live gateway' if guild.live else 'Snapshot mode' }}</span><a class="button" href="#health">Health {{ health_score }}%</a></div>
       </div>
-    </div>
-  </section>
-
-  <section class="panel panel-v3" id="actions">
-    <div class="panel-head"><div class="panel-title-wrap"><span class="panel-icon">⚡</span><div><span class="section-kicker">QUICK ACTIONS</span><h2>Instant operations</h2><p>Publish configured panels or send a direct message immediately.</p></div></div></div>
-    <div class="quick-actions-grid">
-      <div class="action-box">
-        <div class="action-box-head"><span>01</span><div><strong>Post a control panel</strong><small>Publish the configured ticket or verification panel.</small></div></div>
-        <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}">
-          <div class="field premium-field"><label>Panel channel</label><select name="panel_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
-          <div class="panel-actions"><button class="button" type="submit" name="section" value="post_ticket_panel">Ticket panel</button><button class="button" type="submit" name="section" value="post_verification_panel">Verification panel</button></div>
-        </form>
+      <div class="live-metrics" data-live-endpoint="{{ url_for('live_api', guild_id=guild.id) }}">
+        <div><small>BOT</small><strong data-live="bot">{{ 'Online' if guild.live else 'Snapshot' }}</strong><span data-live="latency">{% if guild.live %}Live updates{% else %}Worker-backed{% endif %}</span></div>
+        <div><small>MEMBERS</small><strong data-live="members">{{ '{:,}'.format(guild.member_count|int) }}</strong><span><b data-live="online">{{ guild.online|default(0) }}</b> online</span></div>
+        <div><small>OPEN TICKETS</small><strong data-live="tickets">{{ ticket_analytics.open }}</strong><span>{{ ticket_analytics.total }} total</span></div>
+        <div><small>CASES TODAY</small><strong data-live="cases">0</strong><span>Moderation activity</span></div>
+        <div class="wide"><small>LATEST DASHBOARD EVENT</small><strong data-live="event">{% if audit_rows %}{{ audit_rows[0].action|replace('_',' ') }}{% else %}No recent activity{% endif %}</strong><span data-live="updated">Updates every few seconds</span></div>
       </div>
-      <div class="action-box">
-        <div class="action-box-head"><span>02</span><div><strong>Send bot DM</strong><small>Direct-message a Discord user from the bot account.</small></div></div>
-        <form method="post" class="stack compact-stack"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="send_dm">
-          <div class="field premium-field"><label>User ID</label><input name="dm_user_id" inputmode="numeric" required placeholder="Discord user ID"></div>
-          <div class="field premium-field"><label>Direct message</label><textarea name="dm_content" required placeholder="Write direct message..."></textarea></div>
-          <button class="button" type="submit">Send bot DM</button>
-        </form>
+    </section>
+
+    <section class="overview-grid">
+      <div class="panel overview-health">
+        <div class="panel-head"><div><span class="section-kicker">CONFIGURATION HEALTH</span><h2>{{ health_score }}% ready</h2><p>{{ health_checks|selectattr('ok')|list|length }} of {{ health_checks|length }} checks currently pass.</p></div><div class="health-ring" style="--score:{{ health_score }}"><span>{{ health_score }}</span></div></div>
+        <div class="health-mini-list">{% for check in health_checks[:5] %}<div class="health-mini {{ 'ok' if check.ok else check.severity }}"><span>{{ '✓' if check.ok else '!' }}</span><div><strong>{{ check.name }}</strong><small>{{ check.detail }}</small></div></div>{% endfor %}</div>
+        <a class="text-link" href="#health">View full health report →</a>
       </div>
-    </div>
-  </section>
+      <div class="panel overview-activity"><div class="panel-head"><div><span class="section-kicker">RECENT ACTIVITY</span><h2>What changed</h2><p>Recent dashboard operations for this server.</p></div></div><div class="activity-list">{% for row in audit_rows[:6] %}<div><span class="activity-dot"></span><div><strong>{{ row.action|replace('_',' ')|replace('.',' · ')|title }}</strong><small>{{ row.created_at }}</small></div></div>{% else %}<p class="muted">No dashboard actions yet.</p>{% endfor %}</div></div>
+    </section>
 
-  <section class="panel panel-v3 message-studio" id="message-studio">
-    <div class="panel-head">
-      <div class="panel-title-wrap"><span class="panel-icon">✎</span><div><span class="section-kicker">MESSAGE STUDIO</span><h2>Announcement & embed builder</h2><p>Compose the outside message and a rich Discord embed together, with a live preview before you send.</p></div></div>
-      <span class="badge badge-purple">Live preview</span>
-    </div>
+    <form method="post" id="config-form" class="config-form" data-dirty-form>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="settings"><input type="hidden" name="return_tab" value="overview">
 
-    <form method="post" class="message-builder" id="message-builder-form">
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="send_announcement">
-      <div class="message-builder-controls">
-        <div class="builder-block">
-          <div class="builder-block-head"><div><span class="section-kicker">DELIVERY</span><h3>Message setup</h3></div></div>
-          <div class="field premium-field"><label>Channel</label><select name="action_channel" required>{% for c in channels if c.type.name in ['text','news'] %}<option value="{{ c.id }}"># {{ c.name }}</option>{% endfor %}</select></div>
-          <div class="field premium-field"><label>Message outside embed <span>optional</span></label><textarea name="action_content" data-preview-source="content" maxlength="2000" placeholder="This text appears above the embed. You can leave it blank."></textarea><small>Useful for mentions, a short intro or text that should not be inside the embed.</small></div>
-          <div class="option-grid">
-            <label class="check-row premium-check compact-check"><input type="checkbox" name="action_allow_mentions"><span class="check-control"><i></i></span><span class="check-copy"><strong>Allow mentions</strong><small>Enable @user, @role and @everyone parsing.</small></span></label>
-            <label class="check-row premium-check compact-check"><input type="checkbox" name="action_publish"><span class="check-control"><i></i></span><span class="check-copy"><strong>Publish news post</strong><small>Cross-publish when the target is an Announcement channel.</small></span></label>
-          </div>
+      <section class="panel anchor-panel" id="features">
+        <div class="panel-head"><div><span class="section-kicker">SYSTEMS</span><h2>Feature switches</h2><p>Enable or disable each subsystem independently for this server.</p></div><span class="badge">PER-SERVER</span></div>
+        <div class="feature-grid">
+          {% set feature_labels={'tickets':'Tickets','announcements':'Announcements','welcome':'Welcome','autorole':'Auto-role','verification':'Verification','moderation':'Moderation','automod':'AutoMod','logs':'Logs','auto_messages':'Auto Messages','bot_dms':'Bot DMs','server_stats':'Server Stats','live_dashboard':'Live Dashboard'} %}
+          {% for key,label in feature_labels.items() %}<label class="feature-switch"><span class="feature-icon">{{ label[:1] }}</span><span class="feature-copy"><strong>{{ label }}</strong><small>Currently {{ 'enabled' if cfg.features.get(key) else 'disabled' }}</small></span><input type="checkbox" name="feature_{{ key }}" {% if cfg.features.get(key) %}checked{% endif %}><span class="toggle"></span></label>{% endfor %}
         </div>
+      </section>
 
-        <div class="builder-block embed-settings-block">
-          <div class="builder-block-head"><div><span class="section-kicker">RICH EMBED</span><h3>Embed content</h3></div><label class="small-checkbox builder-toggle"><input type="checkbox" name="action_use_embed" checked data-embed-toggle> Use embed</label></div>
-          <div class="form-grid">
-            <div class="field premium-field"><label>Title</label><input name="embed_title" maxlength="256" data-preview-source="title" placeholder="Announcement title"></div>
-            <div class="field premium-field"><label>Title URL <span>optional</span></label><input name="embed_title_url" maxlength="2048" placeholder="https://..."></div>
-          </div>
-          <div class="field premium-field"><label>Description</label><textarea name="embed_description" maxlength="4096" data-preview-source="description" placeholder="Write the main embed description..."></textarea></div>
-          <div class="color-row">
-            <div class="field premium-field color-field"><label>Accent color</label><div class="color-control"><input type="color" value="#7c3aed" data-color-picker><input name="embed_color" value="#7c3aed" maxlength="7" data-color-text></div></div>
-            <label class="check-row premium-check compact-check timestamp-check"><input type="checkbox" name="embed_timestamp" data-preview-source="timestamp"><span class="check-control"><i></i></span><span class="check-copy"><strong>Show timestamp</strong><small>Add the current send time.</small></span></label>
-          </div>
-
-          <details class="builder-details">
-            <summary>Author, media & footer <span>Optional details</span></summary>
-            <div class="details-body">
-              <div class="form-grid">
-                <div class="field premium-field"><label>Author name</label><input name="embed_author_name" maxlength="256" data-preview-source="author" placeholder="Author name"></div>
-                <div class="field premium-field"><label>Author URL</label><input name="embed_author_url" maxlength="2048" placeholder="https://..."></div>
-                <div class="field premium-field"><label>Author icon URL</label><input name="embed_author_icon_url" maxlength="2048" placeholder="https://..."></div>
-                <div class="field premium-field"><label>Thumbnail URL</label><input name="embed_thumbnail_url" maxlength="2048" data-preview-source="thumbnail" placeholder="https://..."></div>
-                <div class="field premium-field"><label>Large image URL</label><input name="embed_image_url" maxlength="2048" data-preview-source="image" placeholder="https://..."></div>
-                <div class="field premium-field"><label>Footer icon URL</label><input name="embed_footer_icon_url" maxlength="2048" placeholder="https://..."></div>
-              </div>
-              <div class="field premium-field"><label>Footer text</label><input name="embed_footer_text" maxlength="2048" data-preview-source="footer" placeholder="Footer text"></div>
-            </div>
-          </details>
-
-          <div class="embed-fields-head"><div><span class="section-kicker">FIELDS</span><h4>Embed fields</h4></div><button class="button tiny-button" type="button" id="add-embed-field">+ Add field</button></div>
-          <div class="embed-fields-list" id="embed-fields-list">
-            {% for i in range(10) %}
-            <div class="embed-field-row {% if i >= 3 %}is-hidden{% endif %}" data-embed-field-row>
-              <span class="field-index">{{ i + 1 }}</span>
-              <input name="embed_field_name_{{ i }}" maxlength="256" placeholder="Field name" data-field-name>
-              <textarea name="embed_field_value_{{ i }}" maxlength="1024" placeholder="Field value" data-field-value></textarea>
-              <label class="small-checkbox"><input type="checkbox" name="embed_field_inline_{{ i }}" data-field-inline> Inline</label>
-            </div>
-            {% endfor %}
-          </div>
+      <section class="panel anchor-panel" id="routing">
+        <div class="panel-head"><div><span class="section-kicker">ROUTING</span><h2>Channels & roles</h2><p>Map bot systems to Discord channels and roles. Deleted targets are surfaced in Health.</p></div></div>
+        <div class="split-grid">
+          <div><h3 class="subheading">Channels</h3><div class="form-grid">
+            {% set channel_labels={'welcome':'Welcome channel','logs':'General logs','mod_logs':'Moderation logs','automod_logs':'AutoMod logs','announcements':'Default announcements','ticket_category':'Default ticket category','ticket_logs':'Ticket transcripts'} %}
+            {% for key,label in channel_labels.items() %}<div class="field"><label>{{ label }}</label><select name="channel_{{ key }}"><option value="">Not configured</option>{% for channel in channels %}{% if (key=='ticket_category' and channel.type=='category') or (key!='ticket_category' and channel.type in ['text','news']) %}<option value="{{ channel.id }}" {% if cfg.channels.get(key)==channel.id %}selected{% endif %}>{{ channel.name }}</option>{% endif %}{% endfor %}</select></div>{% endfor %}
+          </div></div>
+          <div><h3 class="subheading">Roles</h3><div class="form-grid">
+            {% set role_labels={'autorole':'Join auto-role','verification_add':'Verified role','verification_remove':'Unverified role','ticket_support':'Ticket support role','staff':'Staff role'} %}
+            {% for key,label in role_labels.items() %}<div class="field"><label>{{ label }}</label><select name="role_{{ key }}"><option value="">Not configured</option>{% for role in roles %}<option value="{{ role.id }}" {% if cfg.roles.get(key)==role.id %}selected{% endif %}>{{ role.name }} · {{ role.member_count }} members</option>{% endfor %}</select></div>{% endfor %}
+          </div></div>
         </div>
-      </div>
+      </section>
 
-      <aside class="message-preview-wrap">
-        <div class="preview-sticky">
-          <div class="preview-label"><span class="section-kicker">DISCORD PREVIEW</span><span class="live-dot"><i></i> Live</span></div>
-          <div class="discord-preview" id="discord-preview">
-            <div class="discord-avatar"><img src="{{ url_for('brand_logo') }}" alt=""></div>
-            <div class="discord-message-body">
-              <div class="discord-author-line"><strong>moealturej</strong><span class="app-tag">APP</span><small>Today at 12:00 PM</small></div>
-              <div class="discord-outside-message" data-preview-content>This text appears above the embed.</div>
-              <div class="discord-embed-preview" data-preview-embed>
-                <div class="preview-embed-author" data-preview-author></div>
-                <div class="preview-embed-title" data-preview-title>Announcement title</div>
-                <div class="preview-embed-description" data-preview-description>Write your embed and the preview will update as you type.</div>
-                <div class="preview-embed-fields" data-preview-fields></div>
-                <img class="preview-thumbnail" data-preview-thumbnail alt="">
-                <img class="preview-large-image" data-preview-image alt="">
-                <div class="preview-footer" data-preview-footer></div>
-              </div>
-            </div>
-          </div>
-          <div class="preview-note"><span>i</span><p>The preview mirrors layout and content. Discord may resize remote images differently when the final message is sent.</p></div>
-          <button class="button primary message-send-button" type="submit">Send message <span>→</span></button>
+      <section class="panel anchor-panel" id="welcome-verification">
+        <div class="panel-head"><div><span class="section-kicker">ONBOARDING</span><h2>Welcome & verification</h2><p>Customize join messaging and the Discord OAuth verification experience.</p></div></div>
+        <div class="split-grid">
+          <div class="subpanel"><h3>Welcome</h3><div class="field"><label>Channel message</label><textarea name="welcome_content" rows="4">{{ cfg.welcome.content }}</textarea><small>Variables: {mention}, {user}, {user_id}, {server}, {server_id}, {member_count}</small></div><label class="switch-row compact"><input type="checkbox" name="welcome_dm_enabled" {% if cfg.welcome.dm_enabled %}checked{% endif %}><span class="toggle"></span><span><strong>Welcome DM</strong><small>Send a private welcome message.</small></span></label><div class="field"><label>DM message</label><textarea name="welcome_dm_content" rows="3">{{ cfg.welcome.dm_content }}</textarea></div></div>
+          <div class="subpanel"><h3>Verification</h3><div class="field"><label>Panel title</label><input name="verification_panel_title" value="{{ cfg.verification.panel_title }}"></div><div class="field"><label>Panel description</label><textarea name="verification_panel_description" rows="3">{{ cfg.verification.panel_description }}</textarea></div><div class="form-grid"><div class="field"><label>Button label</label><input name="verification_button_label" value="{{ cfg.verification.button_label }}"></div><div class="field"><label>Success message</label><input name="verification_success_message" value="{{ cfg.verification.success_message }}"></div></div></div>
         </div>
-      </aside>
+      </section>
+
+      <section class="panel anchor-panel" id="tickets">
+        <div class="panel-head"><div><span class="section-kicker">SUPPORT PLATFORM</span><h2>Ticket system</h2><p>Ticket types, opening questions, routing, limits, transcripts and auto-close policy.</p></div><span class="badge success">{{ ticket_analytics.open }} OPEN</span></div>
+        <div class="form-grid"><div class="field"><label>Panel title</label><input name="ticket_panel_title" value="{{ cfg.tickets.panel_title }}"></div><div class="field"><label>Button label</label><input name="ticket_button_label" value="{{ cfg.tickets.button_label }}"></div></div>
+        <div class="field"><label>Panel description</label><textarea name="ticket_panel_description" rows="3">{{ cfg.tickets.panel_description }}</textarea></div>
+        <div class="field"><label>Opening message</label><textarea name="ticket_opening_message" rows="3">{{ cfg.tickets.opening_message }}</textarea></div>
+        <div class="form-grid"><div class="field"><label>Max open tickets per user</label><input type="number" min="1" max="10" name="ticket_max_open" value="{{ cfg.tickets.max_open_per_user }}"></div><div class="field"><label>Auto-close after inactivity <span>hours, 0 = off</span></label><input type="number" min="0" max="720" name="ticket_auto_close" value="{{ cfg.tickets.auto_close_hours }}"></div></div>
+        <div class="builder-section-head"><div><span class="section-kicker">TICKET TYPES</span><h3>Routes & forms</h3></div><span>Up to 5 types · 5 questions each</span></div>
+        <div class="ticket-type-grid">
+          {% for i in range(5) %}{% set t=cfg.tickets.types[i] if cfg.tickets.types|length>i else {} %}
+          <details class="ticket-type-card" {% if i==0 %}open{% endif %}><summary><div><span>{{ '%02d'|format(i+1) }}</span><strong>{{ t.get('name','New ticket type') }}</strong></div><small>{{ t.get('priority','normal')|title }} priority</small></summary><div class="details-body">
+            <label class="switch-row compact"><input type="checkbox" name="ticket_type_enabled_{{ i }}" {% if t.get('enabled',True) %}checked{% endif %}><span class="toggle"></span><span><strong>Type enabled</strong><small>Shown to users in the ticket selector.</small></span></label>
+            <div class="form-grid"><div class="field"><label>Internal key</label><input name="ticket_type_key_{{ i }}" value="{{ t.get('key','') }}" placeholder="technical-support"></div><div class="field"><label>Name</label><input name="ticket_type_name_{{ i }}" value="{{ t.get('name','') }}" placeholder="Technical Support"></div><div class="field"><label>Emoji</label><input name="ticket_type_emoji_{{ i }}" value="{{ t.get('emoji','') }}" placeholder="🎫"></div><div class="field"><label>Priority</label><select name="ticket_type_priority_{{ i }}">{% for p in ['low','normal','high','urgent'] %}<option value="{{ p }}" {% if t.get('priority','normal')==p %}selected{% endif %}>{{ p|title }}</option>{% endfor %}</select></div></div>
+            <div class="field"><label>Description</label><input name="ticket_type_description_{{ i }}" value="{{ t.get('description','') }}" maxlength="100"></div>
+            <div class="form-grid"><div class="field"><label>Category override</label><select name="ticket_type_category_{{ i }}"><option value="">Use default</option>{% for c in categories %}<option value="{{ c.id }}" {% if t.get('category_id')==c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div><div class="field"><label>Support role override</label><select name="ticket_type_role_{{ i }}"><option value="">Use default</option>{% for r in roles %}<option value="{{ r.id }}" {% if t.get('support_role_id')==r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></div></div>
+            <div class="questions-list">{% for q in range(5) %}{% set question=t.get('questions',[])[q] if t.get('questions',[])|length>q else {} %}<div class="question-row"><span>Q{{ q+1 }}</span><input name="ticket_q_label_{{ i }}_{{ q }}" value="{{ question.get('label','') }}" placeholder="Question label"><input name="ticket_q_placeholder_{{ i }}_{{ q }}" value="{{ question.get('placeholder','') }}" placeholder="Placeholder"><select name="ticket_q_style_{{ i }}_{{ q }}"><option value="short" {% if question.get('style')!='paragraph' %}selected{% endif %}>Short</option><option value="paragraph" {% if question.get('style')=='paragraph' %}selected{% endif %}>Paragraph</option></select><label><input type="checkbox" name="ticket_q_required_{{ i }}_{{ q }}" {% if question.get('required') %}checked{% endif %}> Required</label></div>{% endfor %}</div>
+          </div></details>{% endfor %}
+        </div>
+      </section>
+
+      <section class="panel anchor-panel" id="moderation">
+        <div class="panel-head"><div><span class="section-kicker">MODERATION POLICY</span><h2>Cases & warning escalation</h2><p>Every moderation action creates a case. Configure automatic actions at warning thresholds.</p></div></div>
+        <div class="form-grid"><label class="switch-row compact"><input type="checkbox" name="moderation_dm_on_action" {% if cfg.moderation.dm_on_action %}checked{% endif %}><span class="toggle"></span><span><strong>DM on moderation action</strong><small>Tell the member what happened.</small></span></label><label class="switch-row compact"><input type="checkbox" name="moderation_reason_required" {% if cfg.moderation.reason_required %}checked{% endif %}><span class="toggle"></span><span><strong>Require reasons</strong><small>Policy flag for moderation workflows.</small></span></label></div>
+        <div class="threshold-grid">{% for i in range(4) %}{% set rule=cfg.moderation.warning_actions[i] if cfg.moderation.warning_actions|length>i else {} %}<div class="threshold-row"><span>#{{ i+1 }}</span><div class="field"><label>Warnings</label><input type="number" min="1" max="100" name="warning_count_{{ i }}" value="{{ rule.get('count','') }}"></div><div class="field"><label>Action</label><select name="warning_action_{{ i }}"><option value="none">None</option>{% for a in ['timeout','kick','ban'] %}<option value="{{ a }}" {% if rule.get('action')==a %}selected{% endif %}>{{ a|title }}</option>{% endfor %}</select></div><div class="field"><label>Timeout minutes</label><input type="number" min="1" max="40320" name="warning_duration_{{ i }}" value="{{ rule.get('duration_minutes',10) }}"></div></div>{% endfor %}</div>
+      </section>
+
+      <section class="panel anchor-panel" id="automod">
+        <div class="panel-head"><div><span class="section-kicker">AUTOMOD & ANTI-RAID</span><h2>Automatic protection</h2><p>Spam, duplicate messages, mentions, caps, invites, links, filtered phrases, new accounts and join-rate detection.</p></div><span class="badge {{ 'danger' if cfg.automod.raid_mode_active else '' }}">{{ 'RAID MODE' if cfg.automod.raid_mode_active else 'NORMAL' }}</span></div>
+        <div class="automod-switches">{% set am_switches={'spam_enabled':'Spam detection','duplicate_enabled':'Duplicate messages','mention_enabled':'Mention spam','caps_enabled':'Caps filter','invite_block':'Block Discord invites','link_block':'Block links by default','delete_trigger':'Delete triggering message','new_account_enabled':'New account protection','join_rate_enabled':'Join-rate detection','auto_raid_mode':'Automatic raid mode','raid_kick_new_accounts':'Kick new accounts in raid mode'} %}{% for key,label in am_switches.items() %}<label class="switch-row compact"><input type="checkbox" name="automod_{{ key }}" {% if cfg.automod.get(key) %}checked{% endif %}><span class="toggle"></span><span><strong>{{ label }}</strong></span></label>{% endfor %}</div>
+        <div class="form-grid thirds"><div class="field"><label>Spam messages</label><input type="number" name="automod_spam_messages" min="3" max="20" value="{{ cfg.automod.spam_messages }}"></div><div class="field"><label>Spam window <span>seconds</span></label><input type="number" name="automod_spam_window_seconds" min="2" max="60" value="{{ cfg.automod.spam_window_seconds }}"></div><div class="field"><label>Duplicate count</label><input type="number" name="automod_duplicate_count" min="2" max="10" value="{{ cfg.automod.duplicate_count }}"></div><div class="field"><label>Mention limit</label><input type="number" name="automod_mention_limit" min="2" max="30" value="{{ cfg.automod.mention_limit }}"></div><div class="field"><label>Caps percentage</label><input type="number" name="automod_caps_percent" min="10" max="100" value="{{ cfg.automod.caps_percent }}"></div><div class="field"><label>Caps minimum length</label><input type="number" name="automod_caps_min_length" min="5" max="100" value="{{ cfg.automod.caps_min_length }}"></div></div>
+        <div class="form-grid thirds"><div class="field"><label>AutoMod action</label><select name="automod_action">{% for a in ['warn','timeout','kick','ban','delete'] %}<option value="{{ a }}" {% if cfg.automod.action==a %}selected{% endif %}>{{ a|title }}</option>{% endfor %}</select></div><div class="field"><label>Timeout minutes</label><input type="number" name="automod_timeout_minutes" min="1" max="40320" value="{{ cfg.automod.timeout_minutes }}"></div><div class="field"><label>Minimum account age <span>hours</span></label><input type="number" name="automod_min_account_age_hours" min="0" max="8760" value="{{ cfg.automod.min_account_age_hours }}"></div><div class="field"><label>Join threshold</label><input type="number" name="automod_join_rate_count" min="3" max="100" value="{{ cfg.automod.join_rate_count }}"></div><div class="field"><label>Join window <span>seconds</span></label><input type="number" name="automod_join_rate_window_seconds" min="5" max="300" value="{{ cfg.automod.join_rate_window_seconds }}"></div></div>
+        <div class="form-grid"><div class="field"><label>Domain blacklist <span>one per line</span></label><textarea name="automod_domain_blacklist" rows="5">{{ cfg.automod.domain_blacklist|join('\n') }}</textarea></div><div class="field"><label>Domain whitelist <span>one per line</span></label><textarea name="automod_domain_whitelist" rows="5">{{ cfg.automod.domain_whitelist|join('\n') }}</textarea></div><div class="field"><label>Filtered phrases <span>one per line</span></label><textarea name="automod_bad_words" rows="5">{{ cfg.automod.bad_words|join('\n') }}</textarea></div></div>
+        <div class="form-grid"><div class="field"><label>Ignored roles</label><select name="automod_ignore_roles" multiple size="6">{% for role in roles %}<option value="{{ role.id }}" {% if role.id in cfg.automod.ignore_roles %}selected{% endif %}>{{ role.name }}</option>{% endfor %}</select></div><div class="field"><label>Ignored channels</label><select name="automod_ignore_channels" multiple size="6">{% for c in text_channels %}<option value="{{ c.id }}" {% if c.id in cfg.automod.ignore_channels %}selected{% endif %}>#{{ c.name }}</option>{% endfor %}</select></div><div class="field"><label>Raid-mode lock channels</label><select name="automod_raid_lock_channels" multiple size="6">{% for c in text_channels %}<option value="{{ c.id }}" {% if c.id in cfg.automod.raid_lock_channels %}selected{% endif %}>#{{ c.name }}</option>{% endfor %}</select></div></div>
+      </section>
+
+      <section class="panel anchor-panel" id="server-stats" data-members-count="{{ guild.member_count }}" data-humans-count="{{ guild.humans|default(0) }}" data-bots-count="{{ guild.bots|default(0) }}" data-boosts-count="{{ guild.boosts|default(0) }}">
+        <div class="panel-head"><div><span class="section-kicker">VOICE COUNTERS</span><h2>Server Stats</h2><p>Create locked voice channels that display live server metrics. Drag rows to reorder.</p></div><span class="badge">{{ cfg.server_stats.update_interval_seconds }}s</span></div>
+        <div class="form-grid"><div class="field"><label>Category name</label><input name="stats_category_name" value="{{ cfg.server_stats.category_name }}"></div><div class="field"><label>Refresh interval <span>seconds</span></label><input name="stats_interval" type="number" min="60" max="3600" value="{{ cfg.server_stats.update_interval_seconds }}"></div></div>
+        <div class="stats-builder" id="stats-builder">
+          {% for i in range(12) %}{% set item=cfg.server_stats.items[i] if cfg.server_stats.items|length>i else {} %}
+          <div class="stat-config-row" data-stat-row draggable="true"><span class="drag-handle" title="Drag to reorder">⋮⋮</span><label class="mini-toggle"><input type="checkbox" name="stat_enabled_{{ i }}" {% if item.get('enabled') %}checked{% endif %}><span></span></label><input class="stat-emoji" name="stat_emoji_{{ i }}" value="{{ item.get('emoji','') }}" placeholder="👥"><input name="stat_label_{{ i }}" value="{{ item.get('label','') }}" placeholder="Members"><select name="stat_type_{{ i }}" data-stat-type>{% for type,label in [('members','Members'),('humans','Humans'),('bots','Bots'),('boosts','Boosts'),('online','Online'),('voice_users','Voice users'),('staff','Staff role'),('verified','Verified role'),('unverified','Unverified role'),('role','Custom role'),('open_tickets','Open tickets'),('total_tickets','Total tickets'),('channel_count','Channel count'),('server_age_days','Server age days'),('banned','Banned users')] %}<option value="{{ type }}" {% if item.get('type')==type %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><select name="stat_role_{{ i }}" class="stat-role-select"><option value="">Role</option>{% for r in roles %}<option value="{{ r.id }}" data-count="{{ r.member_count }}" {% if item.get('role_id')==r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select><input class="stat-template" name="stat_template_{{ i }}" value="{{ item.get('template','{emoji} {label}: {value}') }}"><span class="stat-preview" data-stat-preview>{{ stat_previews[i].name if stat_previews|length>i else 'Preview' }}</span></div>{% endfor %}
+        </div>
+      </section>
+
+      <section class="panel anchor-panel" id="appearance">
+        <div class="panel-head"><div><span class="section-kicker">DISCORD PRESENTATION</span><h2>Bot appearance</h2><p>Configure default colors and footer branding used by bot-generated embeds.</p></div></div>
+        <div class="color-grid">{% for key,label in [('accent_color','Accent'),('success_color','Success'),('warning_color','Warning'),('error_color','Error'),('ticket_color','Tickets'),('moderation_color','Moderation'),('welcome_color','Welcome')] %}<label class="color-field"><span>{{ label }}</span><input type="color" name="appearance_{{ key }}" value="{{ cfg.appearance.get(key) }}"><code>{{ cfg.appearance.get(key) }}</code></label>{% endfor %}</div>
+        <div class="form-grid"><div class="field"><label>Default footer text</label><input name="appearance_footer_text" value="{{ cfg.appearance.footer_text }}"></div><div class="field"><label>Footer icon URL</label><input name="appearance_footer_icon_url" value="{{ cfg.appearance.footer_icon_url }}" placeholder="https://..."></div></div>
+      </section>
+
+      <div class="savebar sticky-save"><div><span class="save-dot"></span><strong data-dirty-label>All configuration changes saved</strong></div><div class="save-actions"><button class="button" type="reset">Discard local edits</button><button class="button primary" type="submit">Save configuration <span>→</span></button></div></div>
     </form>
-  </section>
+
+    <section class="panel operational-panel" id="server-stats-operations">
+      <div class="panel-head"><div><span class="section-kicker">SERVER STATS ACTIONS</span><h2>Apply voice counters</h2><p>Saving stores the layout. Sync creates or updates the managed category/channels; Remove deletes only channels managed by this feature.</p></div></div>
+      <div class="action-row">
+        <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="server_stats_sync"><input type="hidden" name="return_tab" value="server-stats"><button class="button primary" type="submit">Sync configured stats</button></form>
+        <form method="post" data-confirm="Remove all managed Server Stats channels for {{ guild.name }}?"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="server_stats_remove"><input type="hidden" name="return_tab" value="server-stats"><button class="button danger" type="submit">Remove managed channels</button></form>
+      </div>
+    </section>
+
+    <section class="panel operational-panel" id="ticket-operations">
+      <div class="panel-head"><div><span class="section-kicker">TICKET OPERATIONS</span><h2>Support analytics & panels</h2><p>Monitor support volume, publish panels and close active tickets from the dashboard.</p></div></div>
+      <div class="analytics-grid"><div><small>OPEN</small><strong>{{ ticket_analytics.open }}</strong></div><div><small>CLOSED TODAY</small><strong>{{ ticket_analytics.closed_today }}</strong></div><div><small>AVG RESPONSE</small><strong>{{ ticket_analytics.avg_response_minutes ~ 'm' if ticket_analytics.avg_response_minutes is not none else '—' }}</strong></div><div><small>AVG RESOLUTION</small><strong>{{ ticket_analytics.avg_resolution_minutes ~ 'm' if ticket_analytics.avg_resolution_minutes is not none else '—' }}</strong></div></div>
+      <div class="split-grid">
+        <div><h3 class="subheading">Tickets by type</h3><div class="rank-list">{% for name,count in ticket_analytics.by_type %}<div><span>{{ name }}</span><strong>{{ count }}</strong></div>{% else %}<p class="muted">No ticket data yet.</p>{% endfor %}</div><h3 class="subheading top-gap">Handled by staff</h3><div class="rank-list">{% for staff_id,count in ticket_analytics.by_staff %}<div><span><code>{{ staff_id }}</code></span><strong>{{ count }}</strong></div>{% else %}<p class="muted">No claimed ticket data yet.</p>{% endfor %}</div></div>
+        <div><h3 class="subheading">Publish panels</h3><form method="post" class="inline-action"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="post_ticket_panel"><input type="hidden" name="return_tab" value="tickets"><select name="panel_channel" required><option value="">Choose text channel</option>{% for c in text_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select><button class="button primary" type="submit">Post ticket panel</button></form><form method="post" class="inline-action top-gap"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="post_verification_panel"><input type="hidden" name="return_tab" value="tickets"><select name="panel_channel" required><option value="">Choose verification channel</option>{% for c in text_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select><button class="button" type="submit">Post verification panel</button></form></div>
+      </div>
+      <div class="builder-section-head"><div><span class="section-kicker">RECENT TICKETS</span><h3>Ticket history</h3></div><span>{{ recent_tickets|length }} shown</span></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Channel</th><th>Type</th><th>Owner</th><th>Priority</th><th>Status</th><th>Claimed by</th><th>Opened</th><th></th></tr></thead><tbody>{% for t in recent_tickets %}<tr><td><code>{{ t.channel_id }}</code></td><td>{{ t.type_name or t.type_key }}</td><td><code>{{ t.owner_id }}</code></td><td><span class="case-type">{{ t.priority|default('normal')|title }}</span></td><td>{{ t.status }}</td><td>{{ t.claimed_by or '—' }}</td><td>{{ t.created_at }}</td><td>{% if t.status == 'open' %}<form method="post" data-confirm="Close this ticket and delete its Discord channel after creating a transcript?"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="ticket_close"><input type="hidden" name="ticket_channel_id" value="{{ t.channel_id }}"><input type="hidden" name="return_tab" value="tickets"><button class="button danger tiny" type="submit">Close</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="muted">No tickets have been created yet.</td></tr>{% endfor %}</tbody></table></div>
+    </section>
+
+    <section class="panel operational-panel" id="moderation-actions">
+      <div class="panel-head"><div><span class="section-kicker">MODERATION CONTROL</span><h2>Apply moderation actions</h2><p>Run member and channel moderation directly from the dashboard. Role hierarchy and Discord permissions are checked before destructive actions.</p></div></div>
+      <div class="split-grid">
+        <div class="subpanel"><h3>Member action</h3><form method="post" data-danger-form><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="moderate_user"><input type="hidden" name="return_tab" value="moderation"><div class="field"><label>Discord user ID</label><input name="moderation_user_id" inputmode="numeric" required></div><div class="form-grid"><div class="field"><label>Action</label><select name="moderation_action"><option value="warn">Warn</option><option value="timeout">Timeout</option><option value="untimeout">Remove timeout</option><option value="kick">Kick</option><option value="ban">Ban</option><option value="unban">Unban</option><option value="clear_warnings">Clear warnings</option></select></div><div class="field"><label>Duration <span>minutes for timeout</span></label><input name="moderation_duration" type="number" min="1" max="40320" value="10"></div></div><div class="field"><label>Reason</label><textarea name="moderation_reason" rows="3" maxlength="1000" placeholder="Reason shown in the case record"></textarea></div><button class="button primary" type="submit">Apply member action</button></form></div>
+        <div class="subpanel"><h3>Channel control</h3><form method="post" data-danger-form><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="moderate_channel"><input type="hidden" name="return_tab" value="moderation"><div class="field"><label>Text channel</label><select name="moderation_channel_id" required><option value="">Choose channel</option>{% for c in text_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select></div><div class="form-grid"><div class="field"><label>Action</label><select name="channel_action"><option value="slowmode">Set slowmode</option><option value="purge">Purge messages</option><option value="lock">Lock channel</option><option value="unlock">Unlock channel</option></select></div><div class="field"><label>Value <span>seconds / message count</span></label><input name="channel_action_value" type="number" min="0" max="21600" value="0"></div></div><button class="button" type="submit">Apply channel action</button></form></div>
+      </div>
+    </section>
+
+    <section class="panel operational-panel" id="moderation-cases">
+      <div class="panel-head"><div><span class="section-kicker">MODERATION CASES</span><h2>Recent case history</h2><p>Review case details, update reasons or remove stored records.</p></div><span class="badge">{{ cases|length }} SHOWN</span></div><div class="table-filter"><span>⌕</span><input type="search" placeholder="Filter cases by ID, type, user, moderator or reason…" data-case-filter></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Case</th><th>Type</th><th>User</th><th>Moderator</th><th>Reason</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>{% for c in cases %}<tr data-case-row><td>#{{ c.id }}</td><td><span class="case-type">{{ c.type|replace('_',' ')|title }}</span></td><td><code>{{ c.user_id }}</code></td><td><code>{{ c.moderator_id }}</code></td><td class="reason-cell">{{ c.reason }}</td><td>{{ c.status }}</td><td>{{ c.created_at }}</td><td><details class="row-menu"><summary>•••</summary><div><form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="case_reason"><input type="hidden" name="case_id" value="{{ c.id }}"><input type="hidden" name="return_tab" value="moderation"><input name="case_reason" value="{{ c.reason }}" maxlength="1000"><button class="button tiny" type="submit">Update reason</button></form><form method="post" data-confirm="Delete moderation case #{{ c.id }}? This removes the stored record."><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="case_delete"><input type="hidden" name="case_id" value="{{ c.id }}"><input type="hidden" name="return_tab" value="moderation"><button class="button danger tiny" type="submit">Delete case</button></form></div></details></td></tr>{% else %}<tr><td colspan="8" class="muted">No moderation cases yet.</td></tr>{% endfor %}</tbody></table></div>
+    </section>
+
+    <section class="panel anchor-panel message-studio" id="message-studio">
+      <div class="panel-head"><div><span class="section-kicker">MESSAGE STUDIO</span><h2>Build, preview, send & schedule</h2><p>Compose normal message text plus a rich embed, fields, link buttons or persistent role buttons.</p></div><span class="badge success">LIVE PREVIEW</span></div>
+      <form method="post" id="message-builder-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="message-studio"><input type="hidden" name="schedule_at_iso" id="schedule-at-iso">
+        <div class="studio-grid">
+          <div class="studio-editor">
+            <div class="form-grid"><div class="field"><label>Destination channel</label><select name="action_channel" required><option value="">Choose a text channel</option>{% for c in text_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select></div><div class="field"><label>Template name</label><input name="template_name" placeholder="Server Update"></div></div>
+            <div class="field"><label>Message outside embed <span>optional</span></label><textarea name="action_content" rows="4" maxlength="2000" placeholder="This appears above the embed…"></textarea></div>
+            <div class="studio-options"><label class="switch-row compact"><input type="checkbox" name="action_allow_mentions"><span class="toggle"></span><span><strong>Allow mentions</strong><small>Permit @user, @role and @everyone parsing.</small></span></label><label class="switch-row compact"><input type="checkbox" name="action_publish"><span class="toggle"></span><span><strong>Publish</strong><small>Cross-post when destination is an Announcement channel.</small></span></label><label class="switch-row compact"><input type="checkbox" name="action_use_embed" checked><span class="toggle"></span><span><strong>Embed</strong><small>Include the rich embed below.</small></span></label></div>
+            <div class="embed-editor"><div class="form-grid"><div class="field"><label>Embed title</label><input name="embed_title" maxlength="256" placeholder="Announcement title"></div><div class="field"><label>Title URL</label><input name="embed_title_url" placeholder="https://..."></div></div><div class="field"><label>Description</label><textarea name="embed_description" rows="6" maxlength="4096" placeholder="Write the main embed content…"></textarea></div><div class="form-grid"><div class="field color-input"><label>Embed color</label><div><input type="color" data-color-picker value="{{ cfg.appearance.accent_color }}"><input name="embed_color" data-color-text value="{{ cfg.appearance.accent_color }}"></div></div><label class="switch-row compact"><input type="checkbox" name="embed_timestamp"><span class="toggle"></span><span><strong>Timestamp</strong><small>Add current send time.</small></span></label></div>
+              <details class="builder-details"><summary>Author, media & footer <span>Optional</span></summary><div class="details-body"><div class="form-grid"><div class="field"><label>Author name</label><input name="embed_author_name" maxlength="256"></div><div class="field"><label>Author URL</label><input name="embed_author_url"></div><div class="field"><label>Author icon URL</label><input name="embed_author_icon_url"></div><div class="field"><label>Thumbnail URL</label><input name="embed_thumbnail_url"></div><div class="field"><label>Large image URL</label><input name="embed_image_url"></div><div class="field"><label>Footer icon URL</label><input name="embed_footer_icon_url"></div></div><div class="field"><label>Footer text</label><input name="embed_footer_text" maxlength="2048"></div></div></details>
+              <div class="builder-section-head"><div><span class="section-kicker">EMBED FIELDS</span><h3>Fields</h3></div><button class="button tiny" type="button" id="add-embed-field">+ Add field</button></div><div class="embed-fields-list" id="embed-fields-list">{% for i in range(10) %}<div class="embed-field-row {% if i>=3 %}is-hidden{% endif %}" data-embed-field-row><span>{{ i+1 }}</span><input name="embed_field_name_{{ i }}" maxlength="256" placeholder="Field name" data-field-name><textarea name="embed_field_value_{{ i }}" maxlength="1024" placeholder="Field value" data-field-value></textarea><label><input type="checkbox" name="embed_field_inline_{{ i }}" data-field-inline> Inline</label></div>{% endfor %}</div>
+            </div>
+            <div class="builder-section-head"><div><span class="section-kicker">COMPONENTS</span><h3>Buttons</h3></div><span>Up to 5 · links or role actions</span></div><div class="button-builder">{% for i in range(5) %}<div class="component-row"><label class="mini-toggle"><input type="checkbox" name="button_enabled_{{ i }}"><span></span></label><input name="button_label_{{ i }}" placeholder="Button label"><input name="button_emoji_{{ i }}" placeholder="Emoji"><select name="button_kind_{{ i }}" data-button-kind><option value="link">Link</option><option value="role">Role action</option></select><input name="button_url_{{ i }}" data-button-url placeholder="https://..."><select name="button_role_id_{{ i }}" data-button-role><option value="">Choose role</option>{% for r in roles %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}</select><select name="button_mode_{{ i }}" data-button-mode><option value="toggle">Toggle role</option><option value="add">Add role</option><option value="remove">Remove role</option></select><select name="button_style_{{ i }}"><option value="secondary">Gray</option><option value="primary">Blurple</option><option value="success">Green</option><option value="danger">Red</option></select></div>{% endfor %}</div>
+            <div class="schedule-box"><div class="field"><label>Send later</label><input type="datetime-local" id="schedule-local"></div><div class="field"><label>Repeat every <span>minutes, 0 = once</span></label><input type="number" min="0" max="10080" name="schedule_repeat_minutes" value="0"></div></div>
+            <div class="studio-actions"><button class="button" type="submit" name="section" value="save_template">Save template</button><button class="button" type="submit" name="section" value="schedule_message" data-schedule-submit>Schedule</button><button class="button primary" type="submit" name="section" value="send_message">Send now <span>→</span></button></div>
+          </div>
+          <div class="studio-preview"><div class="preview-window"><div class="preview-top"><span>#</span><strong>preview</strong></div><div class="discord-message"><img src="{{ url_for('brand_logo') }}" alt=""><div><div class="discord-author"><strong>moealturej</strong><span class="bot-tag">BOT</span><small>Today at 12:00 PM</small></div><div class="preview-content" data-preview-content hidden></div><div class="discord-embed" data-preview-embed style="border-left-color:{{ cfg.appearance.accent_color }}"><div class="embed-copy"><div class="preview-author" data-preview-author hidden></div><strong class="preview-title" data-preview-title>Announcement title</strong><div class="preview-description" data-preview-description>Write your embed and the preview updates as you type.</div><div class="preview-fields" data-preview-fields hidden></div><img class="preview-image" data-preview-image hidden alt=""><div class="preview-footer" data-preview-footer hidden></div></div><img class="preview-thumbnail" data-preview-thumbnail hidden alt=""></div><div class="preview-buttons" data-preview-buttons></div></div></div></div><p class="preview-note">Discord-like preview. Exact client rendering may vary slightly.</p></div>
+        </div>
+      </form>
+      <div class="message-library"><div><h3>Saved templates</h3><div class="library-list">{% for t in templates %}<div class="library-row"><div><strong>{{ t.name }}</strong><small>Updated {{ t.updated_at }}</small></div><div><button class="button tiny" type="button" data-load-template="{{ url_for('template_api', guild_id=guild.id, template_id=t.id) }}">Load</button><form method="post" data-confirm="Delete template {{ t.name }}?"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="delete_template"><input type="hidden" name="template_id" value="{{ t.id }}"><input type="hidden" name="return_tab" value="message-studio"><button class="button danger tiny" type="submit">Delete</button></form></div></div>{% else %}<p class="muted">No saved templates.</p>{% endfor %}</div></div><div><h3>Scheduled messages</h3><div class="library-list">{% for s in schedules %}<div class="library-row"><div><strong>#{{ s.id }} · <code>{{ s.channel_id }}</code></strong><small>{{ s.next_run }}{% if s.recurrence_minutes %} · repeats every {{ s.recurrence_minutes }}m{% endif %}</small></div><form method="post" data-confirm="Delete scheduled message #{{ s.id }}?"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="delete_schedule"><input type="hidden" name="schedule_id" value="{{ s.id }}"><input type="hidden" name="return_tab" value="message-studio"><button class="button danger tiny" type="submit">Delete</button></form></div>{% else %}<p class="muted">No scheduled messages.</p>{% endfor %}</div></div></div>
+    </section>
+
+    <section class="panel anchor-panel" id="auto-messages">
+      <div class="panel-head"><div><span class="section-kicker">LEGACY SIMPLE AUTOMATION</span><h2>Recurring plain-text messages</h2><p>Lightweight interval messages. For embeds/buttons and exact times, use Message Studio scheduling.</p></div></div>
+      <form method="post" class="inline-action"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_add"><input type="hidden" name="return_tab" value="auto-messages"><select name="am_channel" required><option value="">Channel</option>{% for c in text_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select><input name="am_interval" type="number" min="5" max="10080" placeholder="Minutes" required><input name="am_content" maxlength="1900" placeholder="Message content" required><button class="button primary" type="submit">Add</button></form>
+      <div class="automation-list">{% for am in automessages %}<form method="post" class="automation-row"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="automessage_update"><input type="hidden" name="message_id" value="{{ am.id }}"><input type="hidden" name="return_tab" value="auto-messages"><span>#{{ am.id }}</span><select name="am_channel">{% for c in text_channels %}<option value="{{ c.id }}" {% if am.channel_id|string==c.id|string %}selected{% endif %}>#{{ c.name }}</option>{% endfor %}</select><input name="am_interval" type="number" min="5" max="10080" value="{{ am.interval_minutes }}"><input name="am_content" value="{{ am.content }}"><label><input type="checkbox" name="am_enabled" {% if am.enabled %}checked{% endif %}> on</label><button class="button tiny">Save</button></form>{% else %}<p class="muted">No recurring plain-text messages.</p>{% endfor %}</div>
+    </section>
+
+    <section class="panel anchor-panel" id="live-actions">
+      <div class="panel-head"><div><span class="section-kicker">LIVE ACTIONS</span><h2>Direct operations</h2><p>Send a bot DM or switch raid mode immediately.</p></div></div>
+      <div class="split-grid"><div class="subpanel"><h3>Bot DM</h3><form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="send_dm"><input type="hidden" name="return_tab" value="live-actions"><div class="field"><label>Discord user ID</label><input name="dm_user_id" inputmode="numeric" required></div><div class="field"><label>Message</label><textarea name="dm_content" rows="5" maxlength="1900" required></textarea></div><button class="button primary" type="submit">Send DM</button></form></div><div class="subpanel raid-card"><h3>Raid mode</h3><p>Uses the AutoMod raid-mode channel list, locks configured channels and increases new-account enforcement.</p><div class="raid-state {{ 'active' if cfg.automod.raid_mode_active else '' }}"><span></span><strong>{{ 'ACTIVE' if cfg.automod.raid_mode_active else 'NORMAL MODE' }}</strong></div><form method="post" data-confirm="{{ 'Disable' if cfg.automod.raid_mode_active else 'Enable' }} raid mode for {{ guild.name }}?"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="raid_mode"><input type="hidden" name="return_tab" value="live-actions"><input type="hidden" name="raid_enabled" value="{{ 'false' if cfg.automod.raid_mode_active else 'true' }}"><button class="button {{ 'danger' if not cfg.automod.raid_mode_active else '' }}" type="submit">{{ 'Disable raid mode' if cfg.automod.raid_mode_active else 'Enable raid mode' }}</button></form></div></div>
+    </section>
+
+    <section class="panel anchor-panel" id="health">
+      <div class="panel-head"><div><span class="section-kicker">CONFIGURATION HEALTH</span><h2>{{ health_score }}% ready</h2><p>Checks missing Discord objects, hierarchy and the permissions required by enabled systems.</p></div><div class="health-ring" style="--score:{{ health_score }}"><span>{{ health_score }}</span></div></div>
+      <div class="health-check-grid">{% for check in health_checks %}<div class="health-check {{ 'ok' if check.ok else check.severity }}"><span>{{ '✓' if check.ok else '!' }}</span><div><strong>{{ check.name }}</strong><small>{{ check.detail }}</small></div></div>{% endfor %}</div>
+      <div class="builder-section-head"><div><span class="section-kicker">BOT PERMISSIONS</span><h3>Permission matrix</h3></div></div><div class="permission-grid">{% for p in permission_rows %}<div class="permission-row"><span class="permission-state {{ 'ok' if p.ok else 'bad' }}">{{ '✓' if p.ok else '×' }}</span><div><strong>{{ p.name }}</strong><small>{{ p.used_by }}</small></div></div>{% endfor %}</div>
+      <div class="health-actions">
+        <form method="post" data-confirm="Run a safe configuration repair? Only references to Discord channels/roles that no longer exist will be cleared."><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="repair_config"><input type="hidden" name="return_tab" value="health"><button class="button" type="submit">Repair stale references</button></form>
+        <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="commands_sync_guild"><input type="hidden" name="return_tab" value="health"><button class="button" type="submit">Sync commands to server</button></form>
+        <form method="post" data-confirm="Remove old guild-specific slash-command overrides? Global commands will still be available after Discord refreshes its command cache."><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="commands_clear_guild"><input type="hidden" name="return_tab" value="health"><button class="button danger" type="submit">Clear guild command overrides</button></form>
+        <a class="button" href="{{ url_for('export_guild_config',guild_id=guild.id) }}">Export configuration JSON</a>
+      </div>
+    </section>
+
+    <section class="panel anchor-panel" id="audit">
+      <div class="panel-head"><div><span class="section-kicker">AUDIT & RECOVERY</span><h2>Change history & backups</h2><p>Track dashboard operations and recover configuration snapshots.</p></div></div>
+      <div class="split-grid"><div><h3 class="subheading">Audit log</h3><div class="audit-list">{% for row in audit_rows[:30] %}<div><span class="audit-time">{{ row.created_at }}</span><div><strong>{{ row.action|replace('_',' ')|replace('.',' · ')|title }}</strong>{% if row.get('changes') %}<small>{{ row.changes|length }} configuration change(s)</small>{% elif row.get('result') %}<small>{{ row.result }}</small>{% endif %}</div></div>{% else %}<p class="muted">No audit events yet.</p>{% endfor %}</div></div><div><h3 class="subheading">Configuration backups</h3><form method="post" class="utility-action compact-utility"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="backup_now"><input type="hidden" name="return_tab" value="audit"><div><span class="utility-icon">＋</span><div><strong>Create backup now</strong><small>Snapshot this server's configuration and message templates.</small></div></div><button class="button" type="submit">Create</button></form><div class="backup-list">{% for b in backups %}<div><span><strong>#{{ b.id }}</strong><small>{{ b.created_at }}</small></span><form method="post" data-confirm="Restore backup #{{ b.id }}? Current configuration will be replaced."><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="section" value="backup_restore"><input type="hidden" name="backup_id" value="{{ b.id }}"><input type="hidden" name="return_tab" value="audit"><button class="button tiny" type="submit">Restore</button></form></div>{% else %}<p class="muted">No backups yet.</p>{% endfor %}</div></div></div>
+    </section>
+  </div>
 </div>
 {% endblock %}

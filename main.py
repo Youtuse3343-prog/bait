@@ -1,7 +1,8 @@
 from __future__ import annotations
-import os
+
 import threading
 from waitress import serve
+
 from bot.client import ProfessionalBot
 from bot.config import settings
 from web.app import create_app
@@ -10,31 +11,56 @@ from web.keepalive import KeepAliveService
 
 def validate_config():
     missing = []
-    for name, value in {
-        "DISCORD_TOKEN": settings.token,
+    common = {
         "DISCORD_CLIENT_ID": settings.client_id,
         "DISCORD_CLIENT_SECRET": settings.client_secret,
         "OWNER_ID": settings.owner_id,
         "SECRET_KEY": settings.secret_key,
-    }.items():
+    }
+    if settings.process_mode in {"combined", "bot"}:
+        common["DISCORD_TOKEN"] = settings.token
+    if settings.process_mode in {"bot", "web"} and not settings.mongodb_uri:
+        missing.append("MONGODB_URI (required for split PROCESS_MODE)")
+    for name, value in common.items():
         if not value or value == "change-me" or value == "replace-with-a-long-random-secret" or str(value).startswith("YOUR_"):
             missing.append(name)
+    if settings.process_mode not in {"combined", "bot", "web"}:
+        missing.append("PROCESS_MODE must be combined, bot, or web")
     if missing:
-        raise SystemExit("Missing/unsafe configuration: " + ", ".join(missing) + ". Copy .env.example to .env and fill it in.")
+        raise SystemExit("Missing/unsafe configuration: " + ", ".join(missing))
 
 
 def run_web(app):
-    serve(app, host="0.0.0.0", port=settings.port, threads=8)
+    serve(app, host="0.0.0.0", port=settings.port, threads=12)
 
 
 def main():
     validate_config()
+    mode = settings.process_mode
+    if mode == "bot":
+        bot = ProfessionalBot()
+        bot.run(settings.token, log_handler=None)
+        return
+    if mode == "web":
+        keep_alive = KeepAliveService()
+        app = create_app(None, keep_alive)
+        keep_alive.start()
+        try:
+            run_web(app)
+        finally:
+            keep_alive.stop()
+        return
+
     bot = ProfessionalBot()
     keep_alive = KeepAliveService()
     app = create_app(bot, keep_alive)
-    threading.Thread(target=run_web, args=(app,), daemon=True, name="dashboard").start()
+    web_thread = threading.Thread(target=run_web, args=(app,), daemon=True, name="dashboard")
+    web_thread.start()
     keep_alive.start()
-    bot.run(settings.token, log_handler=None)
+    try:
+        bot.run(settings.token, log_handler=None)
+    finally:
+        keep_alive.stop()
 
 
 if __name__ == "__main__":
