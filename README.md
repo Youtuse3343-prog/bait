@@ -1,22 +1,24 @@
-# Professional Discord Bot + Owner Dashboard
+# Professional Discord Bot + Management Dashboard
 
-A complete Discord server-management bot with a private owner-only web dashboard.
+A complete Discord server-management bot with a secure web management dashboard.
 
 ## Included
 
 - Tickets: configurable panel, private channels, support role access, claim, close, transcript logging.
-- Announcements: slash command + dashboard send.
+- Message Studio: dashboard sender with optional outside message content, rich embed builder, live Discord-style preview, author/title/media/footer/fields/color/timestamp, mention control, and optional News-channel publishing.
+- Announcements: slash command + rich dashboard sender.
 - Welcome system: channel messages, variables, optional DM.
 - Auto-role on join.
 - Discord OAuth verification: identity-only OAuth flow, remove one role + add another role after verification.
 - Bot DMs: slash command + owner dashboard.
+- Server Stats: managed voice-channel counters for Members, Humans, Bots, Boosts, or any custom role; configurable labels, emoji, channel-name templates, category name, per-row enable switches, and refresh interval.
 - Status rotation: configurable presence type/text and interval.
 - Automatic recurring messages: per-server schedule and on/off feature switch.
 - Moderation: warnings, warning history, clear warnings, purge, timeout/untimeout, kick, ban/unban, slowmode, lock/unlock.
 - Logs / mod logs: joins, leaves, deleted/edited messages, role changes, nickname changes, moderation actions, tickets, verification.
 - General commands: `/ping`, `/userinfo`, `/avatar`, `/serverinfo`, `/botinfo`, `/help`.
 - Command cleanup: startup sync replaces stale global commands with the current tree; owner `/synccommands` supports guild/global sync.
-- Per-server feature switches for tickets, announcements, welcome, autorole, verification, moderation, logs, auto-messages and bot DMs.
+- Per-server feature switches for tickets, announcements, welcome, autorole, verification, moderation, logs, auto-messages, bot DMs and server stats.
 - MongoDB production persistence with SQLite fallback for local development.
 - Owner-only dashboard secured by Discord OAuth + exact `OWNER_ID` match, OAuth state validation, CSRF protection, secure cookie options and security headers.
 
@@ -25,7 +27,7 @@ A complete Discord server-management bot with a private owner-only web dashboard
 1. Create a Discord application and bot.
 2. Enable **Server Members Intent** and **Message Content Intent** in the Bot page.
 3. Invite the bot with `bot` + `applications.commands` scopes.
-4. Give it permissions needed for the enabled features: Manage Roles, Manage Channels, Manage Messages, Moderate Members, Kick Members, Ban Members, View Channels, Send Messages, Read Message History, Embed Links, Attach Files.
+4. Give it permissions needed for the enabled features: Manage Roles, Manage Channels, Manage Messages, Moderate Members, Kick Members, Ban Members, View Channels, Send Messages, Read Message History, Embed Links, Attach Files. **Manage Channels is required for Server Stats.**
 5. Add your Discord OAuth redirect URL exactly, preferably `https://your-domain.com/oauth/callback`. The app also accepts `/verify/callback` for compatibility.
 6. Keep the bot role above any roles it must add/remove.
 
@@ -76,6 +78,30 @@ On macOS/Linux use `source .venv/bin/activate` and `cp .env.example .env`.
 ## Customization placeholders
 
 Welcome/ticket messages support `{mention}`, `{user}`, `{user_id}`, `{server}`, `{server_id}`, and `{member_count}` where relevant.
+
+
+## Server Stats
+
+Open a server in the dashboard and use **Server Stats**. The default setup mirrors common Discord server-stat layouts:
+
+- `👥 Members: {value}`
+- `🧑 Humans: {value}`
+- `🤖 Bots: {value}`
+- `🚀 Boosts: {value}`
+
+Each row can be changed to **Members**, **Humans**, **Bots**, **Boosts**, or **Role members**. You can customize the emoji, label, and full channel-name template with `{emoji}`, `{label}`, and `{value}`. The dashboard can create/sync the managed category and channels immediately, and the bot refreshes them on the configured interval. Managed stat voice channels deny `Connect` for `@everyone` so they function as display counters.
+
+Slash commands `/serverstats sync` and `/serverstats remove` are also included.
+
+## Dashboard logo
+
+For the most reliable logo loading, place your image at:
+
+```text
+web/static/logo.png
+```
+
+The dashboard serves that local file through `/brand/logo.png`. If the file is missing, it falls back to the cached `https://www.moealturej.com/static/logo.png` source.
 
 ## Dashboard self keep-alive
 

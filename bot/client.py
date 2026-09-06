@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from bot.config import settings
 from bot.store import store
-from bot.utils import embed
+from bot.utils import embed, rich_embed
 from bot.views.tickets import TicketCreateView, TicketControlView
 from bot.views.verification import VerificationLinkView
 
@@ -101,15 +101,52 @@ class ProfessionalBot(commands.Bot):
         await channel.send(embed=embed(cfg["verification"]["panel_title"], cfg["verification"]["panel_description"]), view=VerificationLinkView(url, cfg["verification"]["button_label"]))
         return True
 
-    async def send_dashboard_message(self, channel_id: int, content: str, announcement: bool = False) -> bool:
+    async def send_dashboard_message(
+        self,
+        channel_id: int,
+        content: str = "",
+        *,
+        embed_data: dict | None = None,
+        allow_mentions: bool = False,
+        publish: bool = False,
+    ) -> bool:
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
             return False
-        if announcement:
-            await channel.send(embed=embed("Announcement", content[:1900]))
-        else:
-            await channel.send(content[:1900])
+
+        content = (content or "").strip()[:2000]
+        built_embed = rich_embed(embed_data)
+        if not content and built_embed is None:
+            return False
+
+        allowed_mentions = (
+            discord.AllowedMentions(everyone=True, users=True, roles=True, replied_user=False)
+            if allow_mentions
+            else discord.AllowedMentions.none()
+        )
+        message = await channel.send(
+            content=content or None,
+            embed=built_embed,
+            allowed_mentions=allowed_mentions,
+        )
+        if publish and channel.is_news():
+            try:
+                await message.publish()
+            except discord.HTTPException:
+                pass
         return True
+
+    async def sync_server_stats(self, guild_id: int) -> tuple[bool, str]:
+        cog = self.get_cog("Automation")
+        if cog is None or not hasattr(cog, "sync_server_stats"):  # pragma: no cover - defensive
+            return False, "Server stats worker is unavailable."
+        return await cog.sync_server_stats(guild_id, force=True)
+
+    async def remove_server_stats(self, guild_id: int) -> tuple[bool, str]:
+        cog = self.get_cog("Automation")
+        if cog is None or not hasattr(cog, "remove_server_stats"):  # pragma: no cover - defensive
+            return False, "Server stats worker is unavailable."
+        return await cog.remove_server_stats(guild_id)
 
     async def send_dashboard_dm(self, user_id: int, content: str) -> bool:
         try:

@@ -45,13 +45,41 @@ class AutoMessageGroup(app_commands.Group):
         await interaction.response.send_message(f"Removed automatic message `#{message_id}`.", ephemeral=True)
 
 
+class ServerStatsGroup(app_commands.Group):
+    def __init__(self, bot):
+        super().__init__(name="serverstats", description="Manage the server statistics channels")
+        self.bot = bot
+
+    @app_commands.command(name="sync", description="Create or refresh the configured server-stat channels.")
+    async def sync(self, interaction: discord.Interaction):
+        if not manage_guild(interaction):
+            return await interaction.response.send_message("Manage Server permission required.", ephemeral=True)
+        if not interaction.guild_id:
+            return
+        await interaction.response.defer(ephemeral=True)
+        ok, detail = await self.bot.sync_server_stats(interaction.guild_id)
+        await interaction.followup.send(detail, ephemeral=True)
+
+    @app_commands.command(name="remove", description="Remove the stat channels managed by the bot.")
+    async def remove(self, interaction: discord.Interaction):
+        if not manage_guild(interaction):
+            return await interaction.response.send_message("Manage Server permission required.", ephemeral=True)
+        if not interaction.guild_id:
+            return
+        await interaction.response.defer(ephemeral=True)
+        ok, detail = await self.bot.remove_server_stats(interaction.guild_id)
+        await interaction.followup.send(detail, ephemeral=True)
+
+
 class ServerTools(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.tree.add_command(AutoMessageGroup(bot))
+        self.bot.tree.add_command(ServerStatsGroup(bot))
 
     async def cog_unload(self):
         self.bot.tree.remove_command("automessage", type=discord.AppCommandType.chat_input)
+        self.bot.tree.remove_command("serverstats", type=discord.AppCommandType.chat_input)
 
     @app_commands.command(name="announce", description="Send a server announcement through the bot.")
     async def announce(self, interaction: discord.Interaction, message: app_commands.Range[str, 1, 1900], channel: discord.TextChannel | None = None):

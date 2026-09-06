@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import os
 import secrets
 import time
 from collections import defaultdict, deque
@@ -8,7 +9,7 @@ from functools import wraps
 from urllib.parse import urlencode
 
 import requests
-from flask import Flask, Response, abort, flash, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from bot.config import settings
@@ -36,7 +37,7 @@ def create_app(bot, keep_alive=None):
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://discord.com"
         if request.is_secure:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
@@ -115,11 +116,107 @@ def create_app(bot, keep_alive=None):
             abort(404)
         return guild
 
+    def safe_url(value: str, limit: int = 2048) -> str:
+        value = (value or "").strip()[:limit]
+        return value if value.startswith(("https://", "http://")) else ""
+
+    def embed_from_form() -> dict | None:
+        if request.form.get("action_use_embed") != "on":
+            return None
+        raw_color = request.form.get("embed_color", "#7c3aed").strip().lstrip("#")
+        try:
+            color = int(raw_color, 16) if len(raw_color) in {3, 6} else 0x7C3AED
+            if len(raw_color) == 3:
+                color = int("".join(ch * 2 for ch in raw_color), 16)
+        except ValueError:
+            color = 0x7C3AED
+        fields = []
+        for i in range(10):
+            name = request.form.get(f"embed_field_name_{i}", "").strip()[:256]
+            value = request.form.get(f"embed_field_value_{i}", "").strip()[:1024]
+            if name and value:
+                fields.append({
+                    "name": name,
+                    "value": value,
+                    "inline": request.form.get(f"embed_field_inline_{i}") == "on",
+                })
+        payload = {
+            "title": request.form.get("embed_title", "").strip()[:256],
+            "title_url": safe_url(request.form.get("embed_title_url", "")),
+            "description": request.form.get("embed_description", "").strip()[:4096],
+            "color": color,
+            "author_name": request.form.get("embed_author_name", "").strip()[:256],
+            "author_url": safe_url(request.form.get("embed_author_url", "")),
+            "author_icon_url": safe_url(request.form.get("embed_author_icon_url", "")),
+            "thumbnail_url": safe_url(request.form.get("embed_thumbnail_url", "")),
+            "image_url": safe_url(request.form.get("embed_image_url", "")),
+            "footer_text": request.form.get("embed_footer_text", "").strip()[:2048],
+            "footer_icon_url": safe_url(request.form.get("embed_footer_icon_url", "")),
+            "timestamp": request.form.get("embed_timestamp") == "on",
+            "fields": fields,
+        }
+        meaningful = any(payload.get(key) for key in ("title", "description", "author_name", "thumbnail_url", "image_url", "footer_text")) or bool(fields)
+        return payload if meaningful else None
+
+    def apply_server_stats_form(cfg: dict) -> None:
+        stats = cfg.setdefault("server_stats", {})
+        old_items = list(stats.get("items") or [])
+        stats["category_name"] = (request.form.get("stats_category_name", "│ SERVER STATS │").strip() or "│ SERVER STATS │")[:100]
+        raw_interval = request.form.get("stats_interval", "300").strip()
+        stats["update_interval_seconds"] = max(60, min(3600, int(raw_interval) if raw_interval.isdigit() else 300))
+        metric_types = {"members", "humans", "bots", "boosts", "role"}
+        items = []
+        for i in range(8):
+            old = old_items[i] if i < len(old_items) else {}
+            kind = request.form.get(f"stat_type_{i}", old.get("type", "members"))
+            if kind not in metric_types:
+                kind = "members"
+            raw_role = request.form.get(f"stat_role_{i}", "").strip()
+            items.append({
+                "enabled": request.form.get(f"stat_enabled_{i}") == "on",
+                "type": kind,
+                "label": (request.form.get(f"stat_label_{i}", old.get("label", f"Stat {i + 1}")).strip() or f"Stat {i + 1}")[:50],
+                "emoji": request.form.get(f"stat_emoji_{i}", old.get("emoji", "")).strip()[:24],
+                "template": (request.form.get(f"stat_template_{i}", old.get("template", "{emoji} {label}: {value}")).strip() or "{emoji} {label}: {value}")[:100],
+                "role_id": int(raw_role) if raw_role.isdigit() else None,
+                "channel_id": old.get("channel_id"),
+            })
+        stats["items"] = items
+        cfg["server_stats"] = stats
+
+    def server_stat_previews(guild, cfg: dict) -> list[str]:
+        previews = []
+        for item in list((cfg.get("server_stats") or {}).get("items") or [])[:8]:
+            kind = item.get("type", "members")
+            if kind == "members":
+                value = int(guild.member_count or len(guild.members))
+            elif kind == "humans":
+                value = sum(1 for member in guild.members if not member.bot)
+            elif kind == "bots":
+                value = sum(1 for member in guild.members if member.bot)
+            elif kind == "boosts":
+                value = int(guild.premium_subscription_count or 0)
+            elif kind == "role":
+                role = guild.get_role(int(item.get("role_id"))) if str(item.get("role_id") or "").isdigit() else None
+                value = len(role.members) if role else 0
+            else:
+                value = 0
+            template = str(item.get("template") or "{emoji} {label}: {value}")
+            try:
+                name = template.format(emoji=item.get("emoji", ""), label=item.get("label", "Stat"), value=value)
+            except (KeyError, ValueError):
+                name = f"{item.get('emoji', '')} {item.get('label', 'Stat')}: {value}"
+            previews.append({"name": " ".join(name.split())[:100], "value": value})
+        return previews
+
     logo_cache = {"body": None, "content_type": "image/png", "fetched_at": 0.0}
 
     @app.get("/brand/logo.png")
     def brand_logo():
-        """Serve the moealturej logo same-origin so browser CORP/ORB rules cannot block it."""
+        """Serve a local logo when present, otherwise use the cached moealturej fallback."""
+        local_logo = os.path.join(app.static_folder or "", "logo.png")
+        if os.path.isfile(local_logo):
+            return send_file(local_logo, mimetype="image/png", max_age=86400)
         now = time.time()
         # Keep a successful copy in memory for 24 hours. This also prevents every
         # dashboard render from making another request to the public website.
@@ -166,7 +263,7 @@ def create_app(bot, keep_alive=None):
     def login():
         rate_limit("owner-login", 12, 60)
         if not settings.client_id or not settings.client_secret or not settings.owner_id:
-            return render_template("error.html", message="OAuth is not configured. Fill DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, OWNER_ID and OAUTH_REDIRECT_URI in .env."), 503
+            return render_template("error.html", message="Dashboard authentication is not configured correctly."), 503
         return begin_oauth("owner")
 
     @app.get("/logout")
@@ -196,7 +293,7 @@ def create_app(bot, keep_alive=None):
         if purpose == "owner":
             if int(user["id"]) != settings.owner_id:
                 session.clear()
-                return render_template("error.html", message="This dashboard is owner-only. Your Discord account is not authorized."), 403
+                return render_template("error.html", message="This Discord account is not authorized."), 403
             session.clear()
             session.permanent = True
             session["owner_id"] = int(user["id"])
@@ -235,7 +332,8 @@ def create_app(bot, keep_alive=None):
     @owner_required
     def dashboard():
         guilds = sorted(bot.guilds, key=lambda g: g.name.lower())
-        return render_template("dashboard.html", guilds=guilds)
+        total_members = sum(int(g.member_count or 0) for g in guilds)
+        return render_template("dashboard.html", guilds=guilds, total_members=total_members)
 
     @app.route("/dashboard/guild/<int:guild_id>", methods=["GET", "POST"])
     @owner_required
@@ -245,7 +343,7 @@ def create_app(bot, keep_alive=None):
         if request.method == "POST":
             check_csrf()
             section = request.form.get("section", "settings")
-            if section == "settings":
+            if section in {"settings", "server_stats_sync"}:
                 for key in cfg["features"]:
                     cfg["features"][key] = request.form.get(f"feature_{key}") == "on"
                 for key in cfg["channels"]:
@@ -262,8 +360,17 @@ def create_app(bot, keep_alive=None):
                 for key in ["panel_title", "panel_description", "button_label", "success_message"]:
                     cfg["verification"][key] = request.form.get(f"verification_{key}", cfg["verification"][key])[:1900]
                 cfg["moderation"]["dm_on_action"] = request.form.get("moderation_dm_on_action") == "on"
+                apply_server_stats_form(cfg)
                 store.set_guild(guild_id, cfg)
-                flash("Server configuration saved.", "success")
+                if section == "server_stats_sync":
+                    fut = asyncio.run_coroutine_threadsafe(bot.sync_server_stats(guild_id), bot.loop)
+                    try:
+                        ok, detail = fut.result(timeout=20)
+                    except Exception:
+                        ok, detail = False, "The server-stat sync did not complete."
+                    flash(detail, "success" if ok else "error")
+                else:
+                    flash("Server configuration saved.", "success")
             elif section == "automessage_add":
                 channel_id = request.form.get("am_channel", "")
                 interval = request.form.get("am_interval", "")
@@ -284,6 +391,13 @@ def create_app(bot, keep_alive=None):
                 if mid.isdigit():
                     store.delete_automessage(guild_id, int(mid))
                     flash("Automatic message removed.", "success")
+            elif section == "server_stats_remove":
+                fut = asyncio.run_coroutine_threadsafe(bot.remove_server_stats(guild_id), bot.loop)
+                try:
+                    ok, detail = fut.result(timeout=20)
+                except Exception:
+                    ok, detail = False, "The managed server-stat channels could not be removed."
+                flash(detail, "success" if ok else "error")
             elif section in {"post_ticket_panel", "post_verification_panel"}:
                 channel_id = request.form.get("panel_channel", "")
                 if not channel_id.isdigit():
@@ -299,13 +413,29 @@ def create_app(bot, keep_alive=None):
                     flash("Announcements are disabled for this server.", "error")
                     return redirect(url_for("guild_settings", guild_id=guild_id))
                 channel_id = request.form.get("action_channel", "")
-                content = request.form.get("action_content", "").strip()
+                content = request.form.get("action_content", "").strip()[:2000]
+                embed_data = embed_from_form()
                 ch = guild.get_channel(int(channel_id)) if channel_id.isdigit() else None
-                if ch and content:
-                    fut = asyncio.run_coroutine_threadsafe(bot.send_dashboard_message(ch.id, content, True), bot.loop)
-                    try: fut.result(timeout=10)
-                    except Exception: flash("Discord rejected the message.", "error")
-                    else: flash("Announcement sent.", "success")
+                if not ch:
+                    flash("Choose a valid text channel.", "error")
+                elif not content and not embed_data:
+                    flash("Add message content or enable and fill the embed.", "error")
+                else:
+                    fut = asyncio.run_coroutine_threadsafe(
+                        bot.send_dashboard_message(
+                            ch.id,
+                            content,
+                            embed_data=embed_data,
+                            allow_mentions=request.form.get("action_allow_mentions") == "on",
+                            publish=request.form.get("action_publish") == "on",
+                        ),
+                        bot.loop,
+                    )
+                    try:
+                        ok = fut.result(timeout=10)
+                    except Exception:
+                        ok = False
+                    flash("Message sent." if ok else "Discord rejected the message.", "success" if ok else "error")
             elif section == "send_dm":
                 if not cfg["features"]["bot_dms"]:
                     flash("Bot DMs are disabled for this server.", "error")
@@ -324,7 +454,15 @@ def create_app(bot, keep_alive=None):
         channel_choices = sorted(text_channels + categories, key=lambda c: (c.position, c.name.lower()))
         roles = [r for r in guild.roles if not r.is_default() and not r.managed]
         automessages = store.list_automessages(guild_id)
-        return render_template("guild.html", guild=guild, cfg=cfg, channels=channel_choices, roles=roles, automessages=automessages)
+        return render_template(
+            "guild.html",
+            guild=guild,
+            cfg=cfg,
+            channels=channel_choices,
+            roles=roles,
+            automessages=automessages,
+            stat_previews=server_stat_previews(guild, cfg),
+        )
 
     @app.route("/dashboard/global", methods=["GET", "POST"])
     @owner_required

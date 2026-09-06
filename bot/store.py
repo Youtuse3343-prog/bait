@@ -20,6 +20,7 @@ DEFAULT_GUILD = {
         "logs": True,
         "auto_messages": True,
         "bot_dms": True,
+        "server_stats": False,
     },
     "channels": {
         "welcome": None,
@@ -55,6 +56,17 @@ DEFAULT_GUILD = {
     "moderation": {
         "dm_on_action": True,
         "reason_required": False,
+    },
+    "server_stats": {
+        "category_id": None,
+        "category_name": "│ SERVER STATS │",
+        "update_interval_seconds": 300,
+        "items": [
+            {"enabled": True, "type": "members", "label": "Members", "emoji": "👥", "template": "{emoji} {label}: {value}", "role_id": None, "channel_id": None},
+            {"enabled": True, "type": "humans", "label": "Humans", "emoji": "🧑", "template": "{emoji} {label}: {value}", "role_id": None, "channel_id": None},
+            {"enabled": True, "type": "bots", "label": "Bots", "emoji": "🤖", "template": "{emoji} {label}: {value}", "role_id": None, "channel_id": None},
+            {"enabled": True, "type": "boosts", "label": "Boosts", "emoji": "🚀", "template": "{emoji} {label}: {value}", "role_id": None, "channel_id": None},
+        ],
     },
 }
 
