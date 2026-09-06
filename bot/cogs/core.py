@@ -12,7 +12,7 @@ from bot.utils import embed
 
 
 class Core(commands.Cog):
-    bot_group = app_commands.Group(name="bot", description="Bot information and command maintenance")
+    command_group = app_commands.Group(name="bot", description="Bot information and command maintenance")
 
     def __init__(self, bot):
         self.bot = bot
@@ -60,12 +60,12 @@ class Core(commands.Cog):
         if g.icon: e.set_thumbnail(url=g.icon.url)
         await interaction.response.send_message(embed=e)
 
-    @bot_group.command(name="info", description="Show bot health and runtime information")
+    @command_group.command(name="info", description="Show bot health and runtime information")
     async def botinfo(self, interaction: discord.Interaction):
         uptime = int(time.time() - self.bot.started_at)
         await interaction.response.send_message(embed=embed("Bot Info", f"**Servers:** {len(self.bot.guilds)}\n**Users cached:** {len(self.bot.users)}\n**Uptime:** {uptime // 3600}h {(uptime % 3600)//60}m\n**Latency:** {round(self.bot.latency*1000)} ms\n**Python:** {platform.python_version()}\n**discord.py:** {discord.__version__}", guild_id=interaction.guild_id))
 
-    @bot_group.command(name="sync", description="Replace registered slash commands with the current command tree")
+    @command_group.command(name="sync", description="Replace registered slash commands with the current command tree")
     @app_commands.describe(scope="Global production commands, current-server testing, or remove current-server overrides")
     @app_commands.choices(scope=[app_commands.Choice(name="global", value="global"), app_commands.Choice(name="current server", value="guild"), app_commands.Choice(name="remove current-server overrides", value="cleanup")])
     async def synccommands(self, interaction: discord.Interaction, scope: app_commands.Choice[str]):
